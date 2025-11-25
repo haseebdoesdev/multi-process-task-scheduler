@@ -1,0 +1,35 @@
+# Build artifacts
+build/
+scheduler
+worker
+*.o
+*.a
+*.so
+
+# Helper binaries
+add_task_helper
+monitor_helper
+report_helper
+*_helper.c
+
+# Logs
+logs/
+*.log
+
+# PID files
+*.pid
+
+# Reports
+*.csv
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
