@@ -107,16 +107,25 @@ int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned
         return -1;
     }
     
-    // Find insertion point based on priority (lower number = higher priority)
+    // Use binary search to find insertion point (O(log n) instead of O(n))
+    // We're inserting into a priority-sorted array
+    int left = 0;
+    int right = queue->size;
     int insert_pos = queue->size;
-    for (int i = 0; i < queue->size; i++) {
-        if (queue->tasks[i].priority > priority) {
-            insert_pos = i;
-            break;
+    
+    while (left < right) {
+        int mid = left + (right - left) / 2;
+        // Lower priority number = higher priority
+        // We want to insert before tasks with lower priority (higher number)
+        if (queue->tasks[mid].priority > priority) {
+            insert_pos = mid;
+            right = mid;
+        } else {
+            left = mid + 1;
         }
     }
     
-    // Shift tasks to make room
+    // Shift tasks to make room (still O(n) but necessary for array structure)
     for (int i = queue->size; i > insert_pos; i--) {
         queue->tasks[i] = queue->tasks[i - 1];
     }
@@ -149,7 +158,8 @@ int dequeue_task(TaskQueue* queue, Task* task) {
     
     pthread_mutex_lock(&queue->queue_mutex);
     
-    // Find highest priority pending task
+    // Since array is sorted by priority, first pending task is highest priority
+    // This makes dequeue O(n) worst case, but O(1) best case (first task is pending)
     int found_idx = -1;
     for (int i = 0; i < queue->size; i++) {
         if (queue->tasks[i].status == STATUS_PENDING) {
@@ -188,6 +198,9 @@ int update_task_status(TaskQueue* queue, int task_id, TaskStatus new_status, tim
         return -1;
     }
     
+    // Get old status before updating
+    TaskStatus old_status = task->status;
+    
     task->status = new_status;
     if (time_field != NULL) {
         *time_field = time(NULL);
@@ -196,10 +209,20 @@ int update_task_status(TaskQueue* queue, int task_id, TaskStatus new_status, tim
         }
     }
     
-    if (new_status == STATUS_COMPLETED) {
-        queue->completed_tasks++;
-    } else if (new_status == STATUS_FAILED) {
-        queue->failed_tasks++;
+    // Only increment counters if status actually changed from non-terminal to terminal
+    // This prevents double-counting
+    if (old_status != new_status) {
+        if (new_status == STATUS_COMPLETED && old_status != STATUS_COMPLETED) {
+            queue->completed_tasks++;
+        } else if (new_status == STATUS_FAILED && old_status != STATUS_FAILED) {
+            queue->failed_tasks++;
+        }
+        // Decrement counters if changing FROM completed/failed to something else (shouldn't happen, but safe)
+        if (old_status == STATUS_COMPLETED && new_status != STATUS_COMPLETED) {
+            queue->completed_tasks--;
+        } else if (old_status == STATUS_FAILED && new_status != STATUS_FAILED) {
+            queue->failed_tasks--;
+        }
     }
     
     pthread_mutex_unlock(&queue->queue_mutex);
@@ -232,6 +255,9 @@ int is_queue_empty(TaskQueue* queue) {
 int get_pending_task_count(TaskQueue* queue) {
     if (queue == NULL) return 0;
     
+    // This function must be called with mutex already locked
+    // If called from outside, caller must lock
+    
     int count = 0;
     for (int i = 0; i < queue->size; i++) {
         if (queue->tasks[i].status == STATUS_PENDING) {
@@ -244,6 +270,9 @@ int get_pending_task_count(TaskQueue* queue) {
 int get_running_task_count(TaskQueue* queue) {
     if (queue == NULL) return 0;
     
+    // This function must be called with mutex already locked
+    // If called from outside, caller must lock
+    
     int count = 0;
     for (int i = 0; i < queue->size; i++) {
         if (queue->tasks[i].status == STATUS_RUNNING) {
@@ -251,5 +280,66 @@ int get_running_task_count(TaskQueue* queue) {
         }
     }
     return count;
+}
+
+// Thread-safe versions that lock internally
+int get_pending_task_count_safe(TaskQueue* queue) {
+    if (queue == NULL) return 0;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    int count = get_pending_task_count(queue);
+    pthread_mutex_unlock(&queue->queue_mutex);
+    return count;
+}
+
+int get_running_task_count_safe(TaskQueue* queue) {
+    if (queue == NULL) return 0;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    int count = get_running_task_count(queue);
+    pthread_mutex_unlock(&queue->queue_mutex);
+    return count;
+}
+
+int remove_completed_tasks(TaskQueue* queue, int max_age_seconds) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    time_t current_time = time(NULL);
+    int removed = 0;
+    int write_idx = 0;
+    
+    // Compact array by removing old completed/failed tasks
+    for (int read_idx = 0; read_idx < queue->size; read_idx++) {
+        Task* task = &queue->tasks[read_idx];
+        
+        // Keep task if:
+        // 1. Not in terminal state (COMPLETED/FAILED), OR
+        // 2. In terminal state but not old enough
+        int should_keep = 1;
+        if (task->status == STATUS_COMPLETED || task->status == STATUS_FAILED) {
+            if (task->end_time > 0) {
+                int age = (int)difftime(current_time, task->end_time);
+                if (age > max_age_seconds) {
+                    should_keep = 0;
+                    removed++;
+                }
+            }
+        }
+        
+        if (should_keep) {
+            if (write_idx != read_idx) {
+                queue->tasks[write_idx] = queue->tasks[read_idx];
+            }
+            write_idx++;
+        }
+    }
+    
+    queue->size = write_idx;
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return removed;
 }
 

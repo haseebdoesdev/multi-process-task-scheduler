@@ -75,6 +75,8 @@ int spawn_worker(int worker_id) {
 }
 
 void monitor_workers(void) {
+    time_t last_cleanup = time(NULL);
+    
     while (!shutdown_requested) {
         sleep(WORKER_CHECK_INTERVAL);
         
@@ -98,6 +100,7 @@ void monitor_workers(void) {
         
         // Update worker count in shared memory
         if (queue != NULL) {
+            pthread_mutex_lock(&queue->queue_mutex);
             int active = 0;
             for (int i = 0; i < num_workers_running; i++) {
                 if (worker_pids[i] > 0 && kill(worker_pids[i], 0) == 0) {
@@ -105,6 +108,21 @@ void monitor_workers(void) {
                 }
             }
             queue->num_active_workers = active;
+            pthread_mutex_unlock(&queue->queue_mutex);
+        }
+        
+        // Periodic cleanup of completed tasks
+        time_t current_time = time(NULL);
+        if ((current_time - last_cleanup) >= CLEANUP_INTERVAL) {
+            if (queue != NULL) {
+                int removed = remove_completed_tasks(queue, COMPLETED_TASK_MAX_AGE);
+                if (removed > 0) {
+                    LOG_INFO_F("Cleaned up %d completed tasks older than %d seconds", 
+                              removed, COMPLETED_TASK_MAX_AGE);
+                }
+            }
+            last_cleanup = current_time;
+            cleanup_counter++;
         }
     }
 }

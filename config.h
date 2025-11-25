@@ -19,6 +19,8 @@
 // Timeout values (in seconds)
 #define WORKER_CHECK_INTERVAL 5
 #define MONITOR_REFRESH_INTERVAL 2
+#define CLEANUP_INTERVAL 60  // Clean up completed tasks every 60 seconds
+#define COMPLETED_TASK_MAX_AGE 300  // Remove completed tasks older than 5 minutes
 
 #endif // CONFIG_H
 

@@ -54,8 +54,13 @@ Task* find_task_by_id(TaskQueue* queue, int task_id);
 
 int is_queue_full(TaskQueue* queue);
 int is_queue_empty(TaskQueue* queue);
-int get_pending_task_count(TaskQueue* queue);
-int get_running_task_count(TaskQueue* queue);
+int get_pending_task_count(TaskQueue* queue);  // Requires mutex locked
+int get_running_task_count(TaskQueue* queue);  // Requires mutex locked
+int get_pending_task_count_safe(TaskQueue* queue);  // Thread-safe, locks internally
+int get_running_task_count_safe(TaskQueue* queue);  // Thread-safe, locks internally
+
+// Cleanup function for completed tasks
+int remove_completed_tasks(TaskQueue* queue, int max_age_seconds);
 
 #endif // TASK_QUEUE_H
 

@@ -54,15 +54,8 @@ void* task_executor_thread(void* arg) {
 int execute_task(TaskQueue* queue, Task* task) {
     if (task == NULL || queue == NULL) return -1;
     
-    // Update task status to running and set worker ID
-    pthread_mutex_lock(&queue->queue_mutex);
-    Task* queue_task = find_task_by_id(queue, task->id);
-    if (queue_task != NULL) {
-        queue_task->status = STATUS_RUNNING;
-        queue_task->start_time = time(NULL);
-        queue_task->worker_id = worker_id;
-    }
-    pthread_mutex_unlock(&queue->queue_mutex);
+    // Worker ID and status already set in worker_main_loop
+    // No need to lock here again
     
     // Create thread data
     ThreadData* data = (ThreadData*)malloc(sizeof(ThreadData));
@@ -97,18 +90,49 @@ void worker_main_loop(void) {
     while (!shutdown_requested && !(queue && queue->shutdown_flag)) {
         Task task;
         
-        // Try to dequeue a task
-        if (dequeue_task(queue, &task) == -1) {
-            // No tasks available, wait a bit
-            usleep(100000); // 100ms
+        // Use condition variable to wait for tasks instead of polling
+        pthread_mutex_lock(&queue->queue_mutex);
+        
+        // Wait for tasks to become available or shutdown
+        while ((is_queue_empty(queue) || get_pending_task_count(queue) == 0) 
+               && !shutdown_requested 
+               && !queue->shutdown_flag) {
+            pthread_cond_wait(&queue->queue_cond, &queue->queue_mutex);
+        }
+        
+        // Check if we should exit
+        if (shutdown_requested || queue->shutdown_flag) {
+            pthread_mutex_unlock(&queue->queue_mutex);
+            break;
+        }
+        
+        // Try to dequeue a task (mutex still locked)
+        int found_idx = -1;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                found_idx = i;
+                break;
+            }
+        }
+        
+        if (found_idx == -1) {
+            pthread_mutex_unlock(&queue->queue_mutex);
             continue;
         }
         
-        // Execute the task
-        execute_task(queue, &task);
+        // Copy task and update status
+        task = queue->tasks[found_idx];
+        task.status = STATUS_RUNNING;
+        task.start_time = time(NULL);
+        task.worker_id = worker_id;
+        queue->tasks[found_idx].status = STATUS_RUNNING;
+        queue->tasks[found_idx].start_time = task.start_time;
+        queue->tasks[found_idx].worker_id = worker_id;
         
-        // Small delay to prevent CPU spinning
-        usleep(10000); // 10ms
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        // Execute the task (outside of lock)
+        execute_task(queue, &task);
     }
     
     LOG_INFO_F("Worker %d: Main loop exiting", worker_id);
