@@ -122,12 +122,14 @@ void monitor_workers(void) {
                 }
             }
             last_cleanup = current_time;
-            cleanup_counter++;
         }
     }
 }
 
 int main(int argc, char* argv[]) {
+    (void)argc;  // Suppress unused parameter warning
+    (void)argv;
+    
     // Initialize logger
     init_logger("scheduler");
     LOG_INFO_F("Starting scheduler...");
