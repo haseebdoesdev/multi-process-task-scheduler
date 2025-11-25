@@ -15,6 +15,7 @@ TASK_QUEUE_SRC = $(SRC_DIR)/task_queue.c
 LOGGER_SRC = $(SRC_DIR)/logger.c
 SCHEDULER_SRC = $(SRC_DIR)/scheduler.c
 WORKER_SRC = $(SRC_DIR)/worker.c
+WEB_SERVER_SRC = $(SRC_DIR)/web_server.c
 
 # Object files
 COMMON_OBJ = $(BUILD_DIR)/common.o
@@ -22,16 +23,18 @@ TASK_QUEUE_OBJ = $(BUILD_DIR)/task_queue.o
 LOGGER_OBJ = $(BUILD_DIR)/logger.o
 SCHEDULER_OBJ = $(BUILD_DIR)/scheduler.o
 WORKER_OBJ = $(BUILD_DIR)/worker.o
+WEB_SERVER_OBJ = $(BUILD_DIR)/web_server.o
 
 # Executables
 SCHEDULER = scheduler
 WORKER = worker
+WEB_SERVER = web_server
 
 # Header files
 HEADERS = config.h $(SRC_DIR)/common.h $(SRC_DIR)/task_queue.h $(SRC_DIR)/logger.h
 
 # Default target
-all: $(SCHEDULER) $(WORKER) scripts
+all: $(SCHEDULER) $(WORKER) $(WEB_SERVER) scripts
 
 # Create build directory
 $(BUILD_DIR):
@@ -65,14 +68,24 @@ $(WORKER): $(WORKER_OBJ) $(TASK_QUEUE_OBJ) $(COMMON_OBJ) $(LOGGER_OBJ) | $(BUILD
 $(WORKER_OBJ): $(SRC_DIR)/worker.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Web server executable
+$(WEB_SERVER): $(WEB_SERVER_OBJ) $(TASK_QUEUE_OBJ) $(COMMON_OBJ) $(LOGGER_OBJ) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+# Web server object file
+$(WEB_SERVER_OBJ): $(SRC_DIR)/web_server.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # Make scripts executable
 scripts:
 	chmod +x $(SCRIPTS_DIR)/*.sh
+	chmod +x $(SCRIPTS_DIR)/start_web_dashboard.sh
+	chmod +x $(SCRIPTS_DIR)/stop_web_dashboard.sh
 
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(SCHEDULER) $(WORKER)
+	rm -f $(SCHEDULER) $(WORKER) $(WEB_SERVER)
 	rm -f add_task_helper monitor_helper report_helper
 	rm -f *.c # Remove any generated .c files from scripts
 

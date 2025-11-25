@@ -15,7 +15,8 @@ The system consists of:
 - Priority-based task scheduling (HIGH, MEDIUM, LOW)
 - Multiple worker processes with thread-based execution
 - Shared memory IPC with mutex and condition variable synchronization
-- Real-time monitoring and logging
+- **🌐 Beautiful Web Dashboard** with real-time updates and animated charts
+- Terminal-based real-time monitoring
 - CSV report generation
 - Graceful shutdown and resource cleanup
 
@@ -105,9 +106,31 @@ The scheduler will run in the background. Logs are written to the `logs/` direct
 ./scripts/add_task.sh "Low Priority Task" LOW 2000
 ```
 
-### Monitoring
+### Web Dashboard (Recommended)
 
-Monitor the system in real-time:
+Access the beautiful real-time web dashboard:
+```bash
+./scripts/start_web_dashboard.sh
+```
+
+Then open your browser and visit: **http://localhost:8080**
+
+**Features:**
+- 🎨 Modern, animated dashboard interface
+- 📊 Real-time graphs and charts (throughput, status distribution)
+- 📈 Live task queue with progress bars
+- ⚡ Auto-refreshing statistics
+- 🎯 Interactive filtering and sorting
+- 📱 Responsive design (works on mobile/tablet)
+
+The dashboard updates every 2 seconds automatically. Stop it with:
+```bash
+./scripts/stop_web_dashboard.sh
+```
+
+### Terminal Monitoring
+
+Monitor the system in the terminal:
 ```bash
 ./scripts/monitor.sh
 ```
@@ -212,7 +235,13 @@ Log format: `[TIMESTAMP] [PID] [LEVEL] message`
 ./scripts/add_task.sh "Task 4" MEDIUM 4000
 ```
 
-3. Monitor the execution:
+3. Start the web dashboard (in a new terminal):
+```bash
+./scripts/start_web_dashboard.sh
+```
+Then open http://localhost:8080 in your browser
+
+Or monitor in terminal:
 ```bash
 ./scripts/monitor.sh
 ```
