@@ -13,6 +13,8 @@ typedef struct {
     time_t start_time;
     time_t end_time;
     unsigned int execution_time_ms;
+    unsigned int timeout_seconds;  // Task timeout (0 = no timeout)
+    int retry_count;  // Number of retries attempted
     int worker_id;
     pthread_t thread_id;
 } Task;
@@ -47,7 +49,7 @@ TaskQueue* attach_shared_memory(int shm_id);
 void detach_shared_memory(TaskQueue* queue);
 void destroy_shared_memory(int shm_id);
 
-int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned int execution_time_ms);
+int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned int execution_time_ms, unsigned int timeout_seconds);
 int dequeue_task(TaskQueue* queue, Task* task);
 int update_task_status(TaskQueue* queue, int task_id, TaskStatus new_status, time_t* time_field);
 Task* find_task_by_id(TaskQueue* queue, int task_id);
@@ -61,6 +63,12 @@ int get_running_task_count_safe(TaskQueue* queue);  // Thread-safe, locks intern
 
 // Cleanup function for completed tasks
 int remove_completed_tasks(TaskQueue* queue, int max_age_seconds);
+
+// Task recovery function - resets orphaned tasks from crashed workers
+int recover_orphaned_tasks(TaskQueue* queue, int dead_worker_id);
+
+// Task timeout function - checks and handles timed-out tasks
+int check_and_handle_timeouts(TaskQueue* queue);
 
 #endif // TASK_QUEUE_H
 

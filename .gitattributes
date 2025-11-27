@@ -1,0 +1,25 @@
+# Set default behavior to automatically normalize line endings
+* text=auto
+
+# Force LF for shell scripts (important for WSL/Linux)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Force LF for source files
+*.c text eol=lf
+*.h text eol=lf
+
+# Force LF for config files
+Makefile text eol=lf
+*.mk text eol=lf
+
+# Force LF for documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# Binary files
+*.o binary
+*.exe binary
+*.pdf binary
+*.png binary
+*.jpg binary

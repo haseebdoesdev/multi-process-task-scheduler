@@ -24,7 +24,7 @@ if [ ! -f report_helper ]; then
 #include "src/common.h"
 
 void print_csv_header(void) {
-    printf("task_id,name,priority,status,creation_time,start_time,end_time,duration_ms,worker_id\n");
+    printf("task_id,name,priority,status,creation_time,start_time,end_time,duration_ms,timeout_seconds,retry_count,worker_id\n");
 }
 
 void print_task_csv(Task* task) {
@@ -49,7 +49,7 @@ void print_task_csv(Task* task) {
         duration = (unsigned int)difftime(now, task->start_time) * 1000;
     }
     
-    printf("%d,\"%s\",%s,%s,%s,%s,%s,%u,%d\n",
+    printf("%d,\"%s\",%s,%s,%s,%s,%s,%u,%u,%d,%d\n",
            task->id,
            task->name,
            priority_to_string(task->priority),
@@ -58,6 +58,8 @@ void print_task_csv(Task* task) {
            start_time,
            end_time,
            duration,
+           task->timeout_seconds,
+           task->retry_count,
            task->worker_id);
 }
 

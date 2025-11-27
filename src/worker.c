@@ -32,11 +32,36 @@ void* task_executor_thread(void* arg) {
     TaskQueue* q = data->queue;
     int wid = data->worker_id;
     
-    LOG_INFO_F("Worker %d: Thread executing task %d: %s (priority: %s, duration: %u ms)",
-               wid, task.id, task.name, priority_to_string(task.priority), task.execution_time_ms);
+    LOG_INFO_F("Worker %d: Thread executing task %d: %s (priority: %s, duration: %u ms, timeout: %u s)",
+               wid, task.id, task.name, priority_to_string(task.priority), 
+               task.execution_time_ms, task.timeout_seconds);
     
-    // Simulate task execution by sleeping
-    usleep(task.execution_time_ms * 1000); // Convert ms to microseconds
+    // Check if task has timeout and monitor during execution
+    time_t start_time = time(NULL);
+    unsigned long remaining_us = task.execution_time_ms * 1000;
+    
+    // Simulate task execution with timeout checking
+    while (remaining_us > 0) {
+        // Sleep in chunks to allow timeout checking
+        unsigned long chunk_us = (remaining_us > 100000) ? 100000 : remaining_us; // 100ms chunks
+        usleep(chunk_us);
+        remaining_us -= chunk_us;
+        
+        // Check for timeout if task has timeout set
+        if (task.timeout_seconds > 0) {
+            time_t current_time = time(NULL);
+            int elapsed = (int)difftime(current_time, start_time);
+            
+            if (elapsed >= (int)task.timeout_seconds) {
+                LOG_WARN_F("Worker %d: Task %d exceeded timeout (%d seconds), aborting", 
+                          wid, task.id, task.timeout_seconds);
+                // Task will be handled by scheduler's timeout checker
+                // Just exit this thread
+                free(data);
+                return NULL;
+            }
+        }
+    }
     
     // Update task status to completed
     time_t end_time;

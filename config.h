@@ -21,6 +21,9 @@
 #define MONITOR_REFRESH_INTERVAL 2
 #define CLEANUP_INTERVAL 60  // Clean up completed tasks every 60 seconds
 #define COMPLETED_TASK_MAX_AGE 300  // Remove completed tasks older than 5 minutes
+#define TASK_TIMEOUT_CHECK_INTERVAL 2  // Check for task timeouts every 2 seconds
+#define DEFAULT_TASK_TIMEOUT_SECONDS 300  // Default timeout: 5 minutes (0 = no timeout)
+#define MAX_TASK_RETRIES 3  // Maximum number of retries for failed tasks
 
 #endif // CONFIG_H
 

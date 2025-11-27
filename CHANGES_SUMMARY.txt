@@ -1,0 +1,80 @@
+================================================================================
+IMPLEMENTATION COMPLETE - Task Recovery & Timeout Features
+================================================================================
+
+✅ FEATURE 1: Task Recovery on Worker Crash
+-------------------------------------------
+- Added retry_count field to Task structure
+- Implemented recover_orphaned_tasks() function
+- Scheduler automatically recovers tasks when workers crash
+- Tasks retry up to 3 times (configurable)
+- Prevents task loss and queue blocking
+
+✅ FEATURE 2: Task Timeout Mechanism
+-------------------------------------
+- Added timeout_seconds field to Task structure
+- Added STATUS_TIMEOUT status
+- Implemented check_and_handle_timeouts() function
+- Scheduler checks timeouts every 2 seconds
+- Worker threads check timeout during execution
+- Prevents system hangs from stuck tasks
+
+================================================================================
+FILES MODIFIED
+================================================================================
+
+Core Files:
+- src/common.h          (Added STATUS_TIMEOUT)
+- src/common.c          (Updated status_to_string)
+- src/task_queue.h      (Added fields and functions)
+- src/task_queue.c      (Implemented recovery & timeout)
+- src/scheduler.c       (Added monitoring)
+- src/worker.c          (Added timeout checking)
+- src/web_server.c      (Show timeout/retry info)
+- config.h              (Added timeout/retry config)
+
+Scripts:
+- scripts/add_task.sh   (Added timeout parameter)
+- scripts/monitor.sh    (Show timeout/retry info)
+- scripts/report.sh     (Include timeout/retry in CSV)
+
+Documentation:
+- README.md             (Updated usage examples)
+- IMPROVEMENTS.md      (Complete feature documentation)
+
+================================================================================
+USAGE
+================================================================================
+
+Add task with timeout:
+  ./scripts/add_task.sh "Task" HIGH 5000 60    # 60 second timeout
+  ./scripts/add_task.sh "Task" HIGH 5000 0     # No timeout
+  ./scripts/add_task.sh "Task" HIGH 5000       # Default 300s timeout
+
+The system now automatically:
+- Recovers tasks when workers crash
+- Detects and handles task timeouts
+- Retries failed tasks (up to 3 times)
+- Logs all recovery and timeout events
+
+================================================================================
+READY TO USE
+================================================================================
+
+1. Rebuild the project:
+   make clean && make
+
+2. Start scheduler:
+   ./scripts/start_scheduler.sh
+
+3. Add tasks (with optional timeout):
+   ./scripts/add_task.sh "Test" HIGH 5000 10
+
+4. Monitor:
+   ./scripts/monitor.sh
+   # Or open http://localhost:8080
+
+All features are active and ready!
+
+================================================================================
+

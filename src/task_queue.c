@@ -97,7 +97,7 @@ void destroy_shared_memory(int shm_id_to_destroy) {
     }
 }
 
-int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned int execution_time_ms) {
+int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned int execution_time_ms, unsigned int timeout_seconds) {
     if (queue == NULL) return -1;
     
     pthread_mutex_lock(&queue->queue_mutex);
@@ -141,6 +141,8 @@ int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned
     task->start_time = 0;
     task->end_time = 0;
     task->execution_time_ms = execution_time_ms;
+    task->timeout_seconds = timeout_seconds;  // 0 = no timeout
+    task->retry_count = 0;
     task->worker_id = -1;
     task->thread_id = 0;
     
@@ -204,7 +206,7 @@ int update_task_status(TaskQueue* queue, int task_id, TaskStatus new_status, tim
     task->status = new_status;
     if (time_field != NULL) {
         *time_field = time(NULL);
-        if (new_status == STATUS_COMPLETED || new_status == STATUS_FAILED) {
+        if (new_status == STATUS_COMPLETED || new_status == STATUS_FAILED || new_status == STATUS_TIMEOUT) {
             task->end_time = *time_field;
         }
     }
@@ -214,13 +216,15 @@ int update_task_status(TaskQueue* queue, int task_id, TaskStatus new_status, tim
     if (old_status != new_status) {
         if (new_status == STATUS_COMPLETED && old_status != STATUS_COMPLETED) {
             queue->completed_tasks++;
-        } else if (new_status == STATUS_FAILED && old_status != STATUS_FAILED) {
+        } else if ((new_status == STATUS_FAILED || new_status == STATUS_TIMEOUT) && 
+                   old_status != STATUS_FAILED && old_status != STATUS_TIMEOUT) {
             queue->failed_tasks++;
         }
-        // Decrement counters if changing FROM completed/failed to something else (shouldn't happen, but safe)
+        // Decrement counters if changing FROM completed/failed/timeout to something else (shouldn't happen, but safe)
         if (old_status == STATUS_COMPLETED && new_status != STATUS_COMPLETED) {
             queue->completed_tasks--;
-        } else if (old_status == STATUS_FAILED && new_status != STATUS_FAILED) {
+        } else if ((old_status == STATUS_FAILED || old_status == STATUS_TIMEOUT) && 
+                   new_status != STATUS_FAILED && new_status != STATUS_TIMEOUT) {
             queue->failed_tasks--;
         }
     }
@@ -310,15 +314,15 @@ int remove_completed_tasks(TaskQueue* queue, int max_age_seconds) {
     int removed = 0;
     int write_idx = 0;
     
-    // Compact array by removing old completed/failed tasks
+    // Compact array by removing old completed/failed/timeout tasks
     for (int read_idx = 0; read_idx < queue->size; read_idx++) {
         Task* task = &queue->tasks[read_idx];
         
         // Keep task if:
-        // 1. Not in terminal state (COMPLETED/FAILED), OR
+        // 1. Not in terminal state (COMPLETED/FAILED/TIMEOUT), OR
         // 2. In terminal state but not old enough
         int should_keep = 1;
-        if (task->status == STATUS_COMPLETED || task->status == STATUS_FAILED) {
+        if (task->status == STATUS_COMPLETED || task->status == STATUS_FAILED || task->status == STATUS_TIMEOUT) {
             if (task->end_time > 0) {
                 int age = (int)difftime(current_time, task->end_time);
                 if (age > max_age_seconds) {
@@ -341,5 +345,106 @@ int remove_completed_tasks(TaskQueue* queue, int max_age_seconds) {
     pthread_mutex_unlock(&queue->queue_mutex);
     
     return removed;
+}
+
+// Recover orphaned tasks from a crashed worker
+int recover_orphaned_tasks(TaskQueue* queue, int dead_worker_id) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    int recovered = 0;
+    time_t current_time = time(NULL);
+    
+    for (int i = 0; i < queue->size; i++) {
+        Task* task = &queue->tasks[i];
+        
+        // Find tasks that were running on the dead worker
+        if (task->status == STATUS_RUNNING && task->worker_id == dead_worker_id) {
+            // Check if we should retry
+            if (task->retry_count < MAX_TASK_RETRIES) {
+                // Reset task to pending for retry
+                task->status = STATUS_PENDING;
+                task->retry_count++;
+                task->worker_id = -1;
+                task->start_time = 0;
+                task->thread_id = 0;
+                recovered++;
+                
+                LOG_INFO_F("Recovered task %d (retry %d/%d) from crashed worker %d", 
+                          task->id, task->retry_count, MAX_TASK_RETRIES, dead_worker_id);
+            } else {
+                // Max retries exceeded, mark as failed
+                task->status = STATUS_FAILED;
+                task->end_time = current_time;
+                queue->failed_tasks++;
+                
+                LOG_WARN_F("Task %d exceeded max retries (%d), marking as FAILED", 
+                          task->id, MAX_TASK_RETRIES);
+            }
+        }
+    }
+    
+    // Signal workers that new tasks are available
+    if (recovered > 0) {
+        pthread_cond_broadcast(&queue->queue_cond);
+    }
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return recovered;
+}
+
+// Check and handle timed-out tasks
+int check_and_handle_timeouts(TaskQueue* queue) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    int timed_out = 0;
+    time_t current_time = time(NULL);
+    
+    for (int i = 0; i < queue->size; i++) {
+        Task* task = &queue->tasks[i];
+        
+        // Check running tasks for timeout
+        if (task->status == STATUS_RUNNING && task->timeout_seconds > 0 && task->start_time > 0) {
+            int elapsed = (int)difftime(current_time, task->start_time);
+            
+            if (elapsed >= (int)task->timeout_seconds) {
+                // Task has timed out
+                if (task->retry_count < MAX_TASK_RETRIES) {
+                    // Reset for retry
+                    task->status = STATUS_PENDING;
+                    task->retry_count++;
+                    task->worker_id = -1;
+                    task->start_time = 0;
+                    task->thread_id = 0;
+                    timed_out++;
+                    
+                    LOG_WARN_F("Task %d timed out after %d seconds (retry %d/%d)", 
+                              task->id, elapsed, task->retry_count, MAX_TASK_RETRIES);
+                } else {
+                    // Max retries exceeded, mark as timeout
+                    task->status = STATUS_TIMEOUT;
+                    task->end_time = current_time;
+                    queue->failed_tasks++;
+                    timed_out++;
+                    
+                    LOG_ERROR_F("Task %d timed out and exceeded max retries, marking as TIMEOUT", 
+                               task->id);
+                }
+            }
+        }
+    }
+    
+    // Signal workers that new tasks are available (if any were reset to pending)
+    if (timed_out > 0) {
+        pthread_cond_broadcast(&queue->queue_cond);
+    }
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return timed_out;
 }
 

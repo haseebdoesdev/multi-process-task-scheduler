@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # Add Task Script
-# Usage: ./add_task.sh <name> <priority> <duration_ms>
+# Usage: ./add_task.sh <name> <priority> <duration_ms> [timeout_seconds]
 # Priority: HIGH, MEDIUM, or LOW
 # Duration: execution time in milliseconds
+# Timeout: timeout in seconds (optional, 0 = no timeout, default: 300)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -11,18 +12,23 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT" || exit 1
 
 if [ $# -lt 3 ]; then
-    echo "Usage: $0 <name> <priority> <duration_ms>"
+    echo "Usage: $0 <name> <priority> <duration_ms> [timeout_seconds]"
     echo "  name: Task name (use quotes if it contains spaces)"
     echo "  priority: HIGH, MEDIUM, or LOW"
     echo "  duration_ms: Execution time in milliseconds"
+    echo "  timeout_seconds: Timeout in seconds (optional, 0 = no timeout, default: 300)"
     echo ""
-    echo "Example: $0 \"Data Processing\" HIGH 5000"
+    echo "Examples:"
+    echo "  $0 \"Data Processing\" HIGH 5000"
+    echo "  $0 \"Data Processing\" HIGH 5000 60"
+    echo "  $0 \"Data Processing\" HIGH 5000 0  # No timeout"
     exit 1
 fi
 
 TASK_NAME="$1"
 PRIORITY_STR="$2"
 DURATION_MS="$3"
+TIMEOUT_SECONDS="${4:-300}"  # Default to 300 seconds (5 minutes) if not provided
 
 # Validate priority
 PRIORITY_NUM=-1
@@ -45,6 +51,12 @@ esac
 # Validate duration
 if ! [[ "$DURATION_MS" =~ ^[0-9]+$ ]]; then
     echo "Error: Duration must be a positive integer"
+    exit 1
+fi
+
+# Validate timeout
+if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "Error: Timeout must be a non-negative integer (0 = no timeout)"
     exit 1
 fi
 
@@ -83,14 +95,15 @@ if [ ! -f add_task_helper ]; then
 #include "src/common.h"
 
 int main(int argc, char* argv[]) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <name> <priority> <duration>\n", argv[0]);
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <name> <priority> <duration> <timeout>\n", argv[0]);
         return 1;
     }
     
     char* name = argv[1];
     int priority = atoi(argv[2]);
     unsigned int duration = (unsigned int)atoi(argv[3]);
+    unsigned int timeout = (unsigned int)atoi(argv[4]);
     
     TaskQueue* queue = attach_shared_memory(-1);
     if (queue == NULL) {
@@ -98,7 +111,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    int task_id = enqueue_task(queue, name, priority, duration);
+    int task_id = enqueue_task(queue, name, priority, duration, timeout);
     if (task_id > 0) {
         printf("Task added successfully. ID: %d\n", task_id);
     } else {
@@ -120,11 +133,15 @@ EOF
 fi
 
 # Add the task
-./add_task_helper "$TASK_NAME" "$PRIORITY_NUM" "$DURATION_MS"
+./add_task_helper "$TASK_NAME" "$PRIORITY_NUM" "$DURATION_MS" "$TIMEOUT_SECONDS"
 RESULT=$?
 
 if [ $RESULT -eq 0 ]; then
-    echo "Task '$TASK_NAME' added with priority $PRIORITY_STR and duration ${DURATION_MS}ms"
+    if [ "$TIMEOUT_SECONDS" = "0" ]; then
+        echo "Task '$TASK_NAME' added with priority $PRIORITY_STR, duration ${DURATION_MS}ms, no timeout"
+    else
+        echo "Task '$TASK_NAME' added with priority $PRIORITY_STR, duration ${DURATION_MS}ms, timeout ${TIMEOUT_SECONDS}s"
+    fi
 fi
 
 exit $RESULT

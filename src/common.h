@@ -32,7 +32,8 @@ typedef enum {
     STATUS_PENDING = 0,
     STATUS_RUNNING = 1,
     STATUS_COMPLETED = 2,
-    STATUS_FAILED = 3
+    STATUS_FAILED = 3,
+    STATUS_TIMEOUT = 4
 } TaskStatus;
 
 // Utility macros

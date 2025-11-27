@@ -47,9 +47,10 @@ void print_task(Task* task) {
         strcpy(end_time, "N/A");
     }
     
-    printf("  ID: %3d | %-20s | %-6s | %-8s | Worker: %2d\n",
+    printf("  ID: %3d | %-20s | %-6s | %-8s | Worker: %2d | Retry: %d/%d | Timeout: %us\n",
            task->id, task->name, priority_to_string(task->priority),
-           status_to_string(task->status), task->worker_id);
+           status_to_string(task->status), task->worker_id, 
+           task->retry_count, MAX_TASK_RETRIES, task->timeout_seconds);
 }
 
 int main(void) {
@@ -74,8 +75,8 @@ int main(void) {
     // Print tasks
     if (queue->size > 0) {
         printf("Tasks:\n");
-        printf("  ID   | Name                 | Priority | Status   | Worker\n");
-        printf("  -----+----------------------+----------+----------+--------\n");
+        printf("  ID   | Name                 | Priority | Status   | Worker | Retry | Timeout\n");
+        printf("  -----+----------------------+----------+----------+--------+-------+--------\n");
         
         for (int i = 0; i < queue->size; i++) {
             print_task(&queue->tasks[i]);

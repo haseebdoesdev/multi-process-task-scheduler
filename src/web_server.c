@@ -76,18 +76,27 @@ void generate_status_json(char* buffer, int buffer_size) {
     int failed = queue->failed_tasks;
     int total = queue->total_tasks;
     
+    // Count timeout tasks separately
+    int timeout = 0;
+    for (int i = 0; i < queue->size; i++) {
+        if (queue->tasks[i].status == STATUS_TIMEOUT) {
+            timeout++;
+        }
+    }
+    
     snprintf(buffer, buffer_size,
         "{"
         "\"total_tasks\":%d,"
         "\"completed_tasks\":%d,"
         "\"failed_tasks\":%d,"
+        "\"timeout_tasks\":%d,"
         "\"pending_tasks\":%d,"
         "\"running_tasks\":%d,"
         "\"active_workers\":%d,"
         "\"queue_size\":%d,"
         "\"queue_capacity\":%d"
         "}",
-        total, completed, failed, pending, running,
+        total, completed, failed, timeout, pending, running,
         queue->num_active_workers, queue->size, queue->capacity);
     
     pthread_mutex_unlock(&queue->queue_mutex);
@@ -137,7 +146,7 @@ void generate_tasks_json(char* buffer, int buffer_size) {
         if (!first) strcat(buffer, ",");
         first = 0;
         
-        char task_json[512];
+        char task_json[768];
         snprintf(task_json, sizeof(task_json),
             "{"
             "\"id\":%d,"
@@ -148,6 +157,8 @@ void generate_tasks_json(char* buffer, int buffer_size) {
             "\"start_time\":\"%s\","
             "\"end_time\":\"%s\","
             "\"execution_time_ms\":%u,"
+            "\"timeout_seconds\":%u,"
+            "\"retry_count\":%d,"
             "\"worker_id\":%d,"
             "\"progress\":%.2f"
             "}",
@@ -155,7 +166,8 @@ void generate_tasks_json(char* buffer, int buffer_size) {
             priority_to_string(task->priority),
             status_to_string(task->status),
             creation_time, start_time, end_time,
-            task->execution_time_ms, task->worker_id, progress);
+            task->execution_time_ms, task->timeout_seconds, task->retry_count,
+            task->worker_id, progress);
         
         strcat(buffer, task_json);
     }

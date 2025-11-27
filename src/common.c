@@ -15,6 +15,7 @@ const char* status_to_string(TaskStatus s) {
         case STATUS_RUNNING:  return "RUNNING";
         case STATUS_COMPLETED: return "COMPLETED";
         case STATUS_FAILED:   return "FAILED";
+        case STATUS_TIMEOUT:  return "TIMEOUT";
         default:              return "UNKNOWN";
     }
 }

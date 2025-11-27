@@ -76,6 +76,7 @@ int spawn_worker(int worker_id) {
 
 void monitor_workers(void) {
     time_t last_cleanup = time(NULL);
+    time_t last_timeout_check = time(NULL);
     
     while (!shutdown_requested) {
         sleep(WORKER_CHECK_INTERVAL);
@@ -89,6 +90,16 @@ void monitor_workers(void) {
                 if (result > 0) {
                     LOG_WARN_F("Worker %d (PID: %d) exited with status %d", 
                               i, worker_pids[i], WEXITSTATUS(status));
+                    
+                    // Recover orphaned tasks from crashed worker
+                    if (queue != NULL) {
+                        int recovered = recover_orphaned_tasks(queue, i);
+                        if (recovered > 0) {
+                            LOG_INFO_F("Recovered %d orphaned tasks from crashed worker %d", 
+                                      recovered, i);
+                        }
+                    }
+                    
                     // Try to respawn
                     worker_pids[i] = 0;
                     if (spawn_worker(i) == 0) {
@@ -111,8 +122,19 @@ void monitor_workers(void) {
             pthread_mutex_unlock(&queue->queue_mutex);
         }
         
-        // Periodic cleanup of completed tasks
+        // Check for task timeouts (more frequently than worker checks)
         time_t current_time = time(NULL);
+        if ((current_time - last_timeout_check) >= TASK_TIMEOUT_CHECK_INTERVAL) {
+            if (queue != NULL) {
+                int timed_out = check_and_handle_timeouts(queue);
+                if (timed_out > 0) {
+                    LOG_WARN_F("Detected and handled %d timed-out tasks", timed_out);
+                }
+            }
+            last_timeout_check = current_time;
+        }
+        
+        // Periodic cleanup of completed tasks
         if ((current_time - last_cleanup) >= CLEANUP_INTERVAL) {
             if (queue != NULL) {
                 int removed = remove_completed_tasks(queue, COMPLETED_TASK_MAX_AGE);

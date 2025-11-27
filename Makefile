@@ -78,9 +78,19 @@ $(WEB_SERVER_OBJ): $(SRC_DIR)/web_server.c $(HEADERS) | $(BUILD_DIR)
 
 # Make scripts executable
 scripts:
-	chmod +x $(SCRIPTS_DIR)/*.sh
-	chmod +x $(SCRIPTS_DIR)/start_web_dashboard.sh
-	chmod +x $(SCRIPTS_DIR)/stop_web_dashboard.sh
+	@# Fix line endings if running in Linux/WSL (convert CRLF to LF)
+	@if [ -f /proc/version ] && grep -qi "linux" /proc/version 2>/dev/null; then \
+		if command -v dos2unix >/dev/null 2>&1; then \
+			dos2unix $(SCRIPTS_DIR)/*.sh 2>/dev/null || true; \
+		else \
+			for script in $(SCRIPTS_DIR)/*.sh; do \
+				sed -i 's/\r$$//' $$script 2>/dev/null || true; \
+			done; \
+		fi; \
+	fi
+	@chmod +x $(SCRIPTS_DIR)/*.sh
+	@chmod +x $(SCRIPTS_DIR)/start_web_dashboard.sh
+	@chmod +x $(SCRIPTS_DIR)/stop_web_dashboard.sh
 
 # Clean build artifacts
 clean:

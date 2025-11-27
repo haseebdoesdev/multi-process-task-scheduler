@@ -55,21 +55,67 @@ os-project/
 
 ## Building
 
-1. Clone or extract the project:
+### Quick Setup (WSL/Ubuntu)
+
+**If copying from Windows to WSL, run this first:**
 ```bash
-cd os-project
+# Copy project to WSL
+cp -r /mnt/c/Users/HP/Desktop/OS_LAB/OS-Final-Project/multi-process-task-scheduler ~/task-scheduler
+cd ~/task-scheduler
+
+# Run complete setup (fixes line endings and builds)
+bash setup.sh
 ```
 
-2. Build the project:
+### Manual Setup
+
+1. Navigate to project directory:
+```bash
+cd multi-process-task-scheduler
+```
+
+2. Fix line endings (important if files were copied from Windows):
+```bash
+for script in scripts/*.sh; do sed -i 's/\r$//' "$script"; done
+chmod +x scripts/*.sh
+```
+
+3. Install build tools (if needed):
+```bash
+sudo apt update
+sudo apt install -y build-essential make gcc
+```
+
+4. Build the project:
 ```bash
 make
 ```
 
-This will compile all source files and create the `scheduler` and `worker` executables.
+This will compile all source files and create the `scheduler`, `worker`, and `web_server` executables.
 
-3. Make scripts executable (if needed):
+### Troubleshooting Setup
+
+**"cannot execute: required file not found"** - Line ending issue:
 ```bash
+# Quick fix
+for script in scripts/*.sh; do sed -i 's/\r$//' "$script"; done
 chmod +x scripts/*.sh
+
+# OR use setup script
+bash setup.sh
+```
+
+**"Shared memory already exists"**:
+```bash
+./scripts/cleanup.sh
+```
+
+**Build errors**:
+```bash
+sudo apt update
+sudo apt install -y build-essential make gcc
+make clean
+make
 ```
 
 ## Usage
@@ -102,9 +148,14 @@ The scheduler will run in the background. Logs are written to the `logs/` direct
 **Examples:**
 ```bash
 ./scripts/add_task.sh "Data Processing" HIGH 5000
-./scripts/add_task.sh "Backup Task" MEDIUM 10000
-./scripts/add_task.sh "Low Priority Task" LOW 2000
+./scripts/add_task.sh "Backup Task" MEDIUM 10000 60  # 60 second timeout
+./scripts/add_task.sh "Low Priority Task" LOW 2000 0  # No timeout
 ```
+
+**Timeout Parameter (Optional):**
+- Default: 300 seconds (5 minutes)
+- Use `0` for no timeout
+- Format: `./scripts/add_task.sh <name> <priority> <duration_ms> [timeout_seconds]`
 
 ### Web Dashboard (Recommended)
 
@@ -258,21 +309,45 @@ Or monitor in terminal:
 
 ## Troubleshooting
 
-### Scheduler won't start
+### Setup Issues
+
+**"cannot execute: required file not found"** - Line ending issue:
+```bash
+for script in scripts/*.sh; do sed -i 's/\r$//' "$script"; done
+chmod +x scripts/*.sh
+# OR run: bash setup.sh
+```
+
+**"Shared memory already exists"**:
+```bash
+./scripts/cleanup.sh
+```
+
+**Build errors**:
+```bash
+sudo apt update
+sudo apt install -y build-essential make gcc
+make clean
+make
+```
+
+### Runtime Issues
+
+**Scheduler won't start:**
 - Check if shared memory already exists: `ipcs -m`
 - Run cleanup script: `./scripts/cleanup.sh`
 - Check logs in `logs/` directory
 
-### Tasks not executing
+**Tasks not executing:**
 - Verify workers are running: `ps aux | grep worker`
 - Check worker logs in `logs/` directory
 - Ensure shared memory is accessible
 
-### Permission errors
+**Permission errors:**
 - Ensure scripts are executable: `chmod +x scripts/*.sh`
 - Check write permissions for `logs/` directory
 
-### Shared memory issues
+**Shared memory issues:**
 - Run cleanup: `./scripts/cleanup.sh`
 - Check system limits: `ipcs -l`
 - Manually remove: `ipcrm -m <shmid>`
