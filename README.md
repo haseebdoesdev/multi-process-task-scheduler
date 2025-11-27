@@ -17,6 +17,7 @@ The system consists of:
 - Shared memory IPC with mutex and condition variable synchronization
 - **🌐 Beautiful Web Dashboard** with real-time updates and animated charts
 - Terminal-based real-time monitoring
+- **🎯 Simulation Script** - Demonstrates all system mechanisms automatically
 - CSV report generation
 - Graceful shutdown and resource cleanup
 
@@ -246,12 +247,25 @@ Or monitor in terminal:
 ./scripts/monitor.sh
 ```
 
-4. Generate a report:
+4. Run the simulation script (demonstrates all features):
+```bash
+./scripts/runSimulation.sh
+```
+
+This script demonstrates:
+- Priority-based scheduling (HIGH tasks execute first)
+- Concurrent execution (multiple tasks in parallel)
+- Queue management (tasks queue when workers busy)
+- Worker distribution (tasks distributed across workers)
+- Burst load handling (system handles sudden spikes)
+- Mixed workloads (different task types and durations)
+
+5. Generate a report:
 ```bash
 ./scripts/report.sh my_report.csv
 ```
 
-5. Clean up:
+6. Clean up:
 ```bash
 ./scripts/cleanup.sh
 ```

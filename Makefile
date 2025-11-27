@@ -81,6 +81,7 @@ scripts:
 	chmod +x $(SCRIPTS_DIR)/*.sh
 	chmod +x $(SCRIPTS_DIR)/start_web_dashboard.sh
 	chmod +x $(SCRIPTS_DIR)/stop_web_dashboard.sh
+	chmod +x $(SCRIPTS_DIR)/runSimulation.sh
 
 # Clean build artifacts
 clean:
