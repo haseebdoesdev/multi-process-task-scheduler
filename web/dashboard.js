@@ -1,7 +1,7 @@
 // Dashboard JavaScript for real-time updates
 
 const API_BASE = '';
-const REFRESH_INTERVAL = 2000; // 2 seconds
+const REFRESH_INTERVAL = 500; // 0.5 seconds (faster updates)
 let autoRefresh = true;
 let refreshIntervalId = null;
 let throughputData = [];
