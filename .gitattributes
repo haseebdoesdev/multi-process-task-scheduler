@@ -1,0 +1,37 @@
+# Set default line endings for all text files
+* text=auto
+
+# Force LF line endings for shell scripts
+*.sh text eol=lf
+
+# Force LF line endings for C/C++ source files
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.hpp text eol=lf
+
+# Force LF line endings for Makefile
+Makefile text eol=lf
+makefile text eol=lf
+
+# Force LF line endings for web files
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Force LF line endings for documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# Force LF line endings for config files
+*.conf text eol=lf
+*.config text eol=lf
+
+# Binary files
+*.o binary
+*.a binary
+*.so binary
+*.exe binary
+*.dll binary
+*.log binary
+

@@ -62,5 +62,8 @@ int get_running_task_count_safe(TaskQueue* queue);  // Thread-safe, locks intern
 // Cleanup function for completed tasks
 int remove_completed_tasks(TaskQueue* queue, int max_age_seconds);
 
+// Cancel a task (only PENDING tasks can be cancelled)
+int cancel_task(TaskQueue* queue, int task_id);
+
 #endif // TASK_QUEUE_H
 

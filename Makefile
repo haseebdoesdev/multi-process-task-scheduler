@@ -78,10 +78,7 @@ $(WEB_SERVER_OBJ): $(SRC_DIR)/web_server.c $(HEADERS) | $(BUILD_DIR)
 
 # Make scripts executable
 scripts:
-	chmod +x $(SCRIPTS_DIR)/*.sh
-	chmod +x $(SCRIPTS_DIR)/start_web_dashboard.sh
-	chmod +x $(SCRIPTS_DIR)/stop_web_dashboard.sh
-	chmod +x $(SCRIPTS_DIR)/runSimulation.sh
+	@chmod +x $(SCRIPTS_DIR)/*.sh 2>/dev/null || true
 
 # Clean build artifacts
 clean:
@@ -109,5 +106,20 @@ debug: all
 release: CFLAGS += -O2 -DNDEBUG
 release: clean all
 
-.PHONY: all clean distclean install debug release scripts
+# Fix line endings (for Windows to Linux migration)
+fix-line-endings:
+	@echo "Fixing line endings for all files..."
+	@if command -v dos2unix >/dev/null 2>&1; then \
+		find . -type f \( -name "*.sh" -o -name "*.c" -o -name "*.h" -o -name "Makefile" -o -name "*.md" -o -name "*.css" -o -name "*.js" -o -name "*.html" \) \
+			-not -path "./build/*" -not -path "./logs/*" -not -path "./.git/*" \
+			-exec dos2unix {} \; 2>/dev/null || true; \
+	else \
+		find . -type f \( -name "*.sh" -o -name "*.c" -o -name "*.h" -o -name "Makefile" -o -name "*.md" -o -name "*.css" -o -name "*.js" -o -name "*.html" \) \
+			-not -path "./build/*" -not -path "./logs/*" -not -path "./.git/*" \
+			-exec sed -i 's/\r$$//' {} \; 2>/dev/null || true; \
+	fi
+	@chmod +x scripts/*.sh 2>/dev/null || true
+	@echo "Line endings fixed!"
+
+.PHONY: all clean distclean install debug release scripts fix-line-endings
 

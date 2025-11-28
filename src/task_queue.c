@@ -343,3 +343,30 @@ int remove_completed_tasks(TaskQueue* queue, int max_age_seconds) {
     return removed;
 }
 
+int cancel_task(TaskQueue* queue, int task_id) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    Task* task = find_task_by_id(queue, task_id);
+    if (task == NULL) {
+        pthread_mutex_unlock(&queue->queue_mutex);
+        return -1; // Task not found
+    }
+    
+    // Only PENDING tasks can be cancelled
+    if (task->status != STATUS_PENDING) {
+        pthread_mutex_unlock(&queue->queue_mutex);
+        return -2; // Task not in cancellable state
+    }
+    
+    // Mark as failed (cancelled)
+    task->status = STATUS_FAILED;
+    task->end_time = time(NULL);
+    queue->failed_tasks++;
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return 0; // Success
+}
+
