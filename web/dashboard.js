@@ -10,11 +10,16 @@ let maxDataPoints = 30;
 // Chart instances
 let throughputChart = null;
 let statusChart = null;
+let workerChart = null;
+
+// Current tasks data for modal
+let currentTasks = [];
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
     initializeCharts();
     setupEventListeners();
+    setupForms();
     startAutoRefresh();
     updateDashboard();
 });
@@ -98,6 +103,54 @@ function initializeCharts() {
             }
         }
     });
+    
+    // Worker Utilization Chart
+    const workerCtx = document.getElementById('workerChart').getContext('2d');
+    workerChart = new Chart(workerCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Running',
+                    data: [],
+                    backgroundColor: 'rgb(243, 156, 18)',
+                    stack: 'Stack 0'
+                },
+                {
+                    label: 'Completed',
+                    data: [],
+                    backgroundColor: 'rgb(46, 204, 113)',
+                    stack: 'Stack 0'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: {
+                        color: '#f1f5f9'
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    ticks: { color: '#94a3b8' },
+                    grid: { color: '#334155' }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: { color: '#94a3b8' },
+                    grid: { color: '#334155' }
+                }
+            }
+        }
+    });
 }
 
 // Setup event listeners
@@ -117,8 +170,117 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('statusFilter').addEventListener('change', updateTaskTable);
-    document.getElementById('priorityFilter').addEventListener('change', updateTaskTable);
+    document.getElementById('statusFilter').addEventListener('change', () => updateTaskTable(currentTasks));
+    document.getElementById('priorityFilter').addEventListener('change', () => updateTaskTable(currentTasks));
+    
+    // Export buttons
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+    document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
+    
+    // Modal close
+    document.getElementById('modalClose').addEventListener('click', closeModal);
+    document.getElementById('taskModal').addEventListener('click', (e) => {
+        if (e.target.id === 'taskModal') closeModal();
+    });
+}
+
+function setupForms() {
+    // Add Task Form
+    const addTaskForm = document.getElementById('addTaskForm');
+    const addTaskMessage = document.getElementById('addTaskMessage');
+    
+    addTaskForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        addTaskMessage.className = 'message';
+        addTaskMessage.textContent = 'Adding task...';
+        addTaskMessage.className = 'message info';
+        
+        const formData = {
+            name: document.getElementById('taskName').value,
+            priority: document.getElementById('taskPriority').value,
+            duration: parseInt(document.getElementById('taskDuration').value)
+        };
+        
+        try {
+            const response = await fetch('/api/add_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                addTaskMessage.textContent = `✅ ${result.message} (Task ID: ${result.task_id})`;
+                addTaskMessage.className = 'message success';
+                addTaskForm.reset();
+                // Refresh dashboard after a short delay
+                setTimeout(() => updateDashboard(), 500);
+            } else {
+                addTaskMessage.textContent = `❌ Error: ${result.error || 'Failed to add task'}`;
+                addTaskMessage.className = 'message error';
+            }
+        } catch (error) {
+            addTaskMessage.textContent = `❌ Network error: ${error.message}`;
+            addTaskMessage.className = 'message error';
+        }
+        
+        // Clear message after 5 seconds
+        setTimeout(() => {
+            addTaskMessage.className = 'message';
+            addTaskMessage.textContent = '';
+        }, 5000);
+    });
+    
+    // Simulation Form
+    const simulationForm = document.getElementById('simulationForm');
+    const simulationMessage = document.getElementById('simulationMessage');
+    
+    simulationForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        simulationMessage.className = 'message';
+        simulationMessage.textContent = 'Starting simulation...';
+        simulationMessage.className = 'message info';
+        
+        const formData = {
+            scenario: document.getElementById('simScenario').value,
+            count: parseInt(document.getElementById('simCount').value),
+            interval: parseInt(document.getElementById('simInterval').value)
+        };
+        
+        try {
+            const response = await fetch('/api/simulate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                simulationMessage.textContent = `✅ ${result.message || 'Simulation started in background'} (${result.total} tasks)`;
+                simulationMessage.className = 'message success';
+                // Refresh dashboard after a short delay to see tasks appear
+                setTimeout(() => updateDashboard(), 500);
+            } else {
+                simulationMessage.textContent = `❌ Error: ${result.error || 'Failed to start simulation'}`;
+                simulationMessage.className = 'message error';
+            }
+        } catch (error) {
+            simulationMessage.textContent = `❌ Network error: ${error.message}`;
+            simulationMessage.className = 'message error';
+        }
+        
+        // Clear message after 5 seconds
+        setTimeout(() => {
+            simulationMessage.className = 'message';
+            simulationMessage.textContent = '';
+        }, 5000);
+    });
 }
 
 // Start auto-refresh
@@ -142,16 +304,19 @@ function stopAutoRefresh() {
 // Update entire dashboard
 async function updateDashboard() {
     try {
-        const [status, tasks, workers] = await Promise.all([
+        const [status, tasks, workers, workerStats] = await Promise.all([
             fetch(`${API_BASE}/api/status`).then(r => r.json()),
             fetch(`${API_BASE}/api/tasks`).then(r => r.json()),
-            fetch(`${API_BASE}/api/workers`).then(r => r.json())
+            fetch(`${API_BASE}/api/workers`).then(r => r.json()),
+            fetch(`${API_BASE}/api/worker_stats`).then(r => r.json())
         ]);
 
+        currentTasks = tasks.tasks || [];
         updateStatistics(status);
-        updateTaskTable(tasks.tasks || []);
+        updateTaskTable(currentTasks);
         updateWorkers(workers);
-        updateCharts(status, tasks.tasks || []);
+        updateCharts(status, currentTasks);
+        updateWorkerChart(workerStats);
         updateLastUpdateTime();
         
     } catch (error) {
@@ -220,7 +385,7 @@ function updateTaskTable(tasks) {
     filteredTasks.sort((a, b) => b.id - a.id);
     
     if (filteredTasks.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">No tasks found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No tasks found</td></tr>';
         return;
     }
     
@@ -230,10 +395,11 @@ function updateTaskTable(tasks) {
         const isNew = !previousTasks.has(task.id);
         const rowClass = isNew ? 'new-task' : '';
         
+        const canCancel = task.status === 'PENDING';
         html += `
             <tr class="${rowClass}">
                 <td>${task.id}</td>
-                <td>${escapeHtml(task.name)}</td>
+                <td class="task-name-cell" onclick="openTaskModal(${task.id})" style="cursor:pointer;">${escapeHtml(task.name)}</td>
                 <td><span class="priority-badge priority-${task.priority.toLowerCase()}">${task.priority}</span></td>
                 <td><span class="status-badge status-${task.status.toLowerCase()}">${task.status}</span></td>
                 <td>
@@ -243,6 +409,10 @@ function updateTaskTable(tasks) {
                 </td>
                 <td>${task.worker_id >= 0 ? `Worker ${task.worker_id}` : '-'}</td>
                 <td>${formatTime(task.creation_time)}</td>
+                <td class="task-actions">
+                    <button class="btn btn-view" onclick="openTaskModal(${task.id})">👁</button>
+                    <button class="btn btn-cancel" onclick="cancelTask(${task.id})" ${canCancel ? '' : 'disabled'}>✖</button>
+                </td>
             </tr>
         `;
     });
@@ -331,6 +501,132 @@ function formatTime(timeStr) {
     if (!timeStr) return '-';
     const date = new Date(timeStr);
     return date.toLocaleString();
+}
+
+// Update worker utilization chart
+function updateWorkerChart(workerStats) {
+    if (!workerStats || !workerStats.workers) return;
+    
+    const labels = workerStats.workers.map(w => `Worker ${w.id}`);
+    const runningData = workerStats.workers.map(w => w.running);
+    const completedData = workerStats.workers.map(w => w.completed);
+    
+    workerChart.data.labels = labels;
+    workerChart.data.datasets[0].data = runningData;
+    workerChart.data.datasets[1].data = completedData;
+    workerChart.update('none');
+}
+
+// Export functions
+async function exportCSV() {
+    try {
+        const response = await fetch('/api/export/csv');
+        const csv = await response.text();
+        downloadFile(csv, 'tasks.csv', 'text/csv');
+    } catch (error) {
+        console.error('Export CSV failed:', error);
+        alert('Failed to export CSV');
+    }
+}
+
+async function exportJSON() {
+    try {
+        const response = await fetch('/api/export/json');
+        const json = await response.text();
+        downloadFile(json, 'tasks.json', 'application/json');
+    } catch (error) {
+        console.error('Export JSON failed:', error);
+        alert('Failed to export JSON');
+    }
+}
+
+function downloadFile(content, filename, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Task modal functions
+function openTaskModal(taskId) {
+    const task = currentTasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    document.getElementById('modalTaskName').textContent = task.name;
+    document.getElementById('modalTaskId').textContent = task.id;
+    document.getElementById('modalTaskPriority').innerHTML = `<span class="priority-badge priority-${task.priority.toLowerCase()}">${task.priority}</span>`;
+    document.getElementById('modalTaskStatus').innerHTML = `<span class="status-badge status-${task.status.toLowerCase()}">${task.status}</span>`;
+    document.getElementById('modalTaskWorker').textContent = task.worker_id >= 0 ? `Worker ${task.worker_id}` : 'Not assigned';
+    document.getElementById('modalTaskDuration').textContent = `${task.execution_time_ms} ms`;
+    document.getElementById('modalTaskProgress').textContent = `${(task.progress || 0).toFixed(1)}%`;
+    
+    // Timeline
+    document.getElementById('modalTimeCreated').textContent = task.creation_time || '-';
+    document.getElementById('modalTimeStarted').textContent = task.start_time || '-';
+    document.getElementById('modalTimeEnded').textContent = task.end_time || '-';
+    
+    // Calculate metrics
+    let waitTime = '-', execTime = '-', turnaroundTime = '-';
+    
+    if (task.creation_time && task.start_time) {
+        const created = new Date(task.creation_time);
+        const started = new Date(task.start_time);
+        const wait = (started - created) / 1000;
+        waitTime = `${wait.toFixed(1)}s`;
+    }
+    
+    if (task.start_time && task.end_time) {
+        const started = new Date(task.start_time);
+        const ended = new Date(task.end_time);
+        const exec = (ended - started) / 1000;
+        execTime = `${exec.toFixed(1)}s`;
+    }
+    
+    if (task.creation_time && task.end_time) {
+        const created = new Date(task.creation_time);
+        const ended = new Date(task.end_time);
+        const turnaround = (ended - created) / 1000;
+        turnaroundTime = `${turnaround.toFixed(1)}s`;
+    }
+    
+    document.getElementById('modalWaitTime').textContent = waitTime;
+    document.getElementById('modalExecTime').textContent = execTime;
+    document.getElementById('modalTurnaroundTime').textContent = turnaroundTime;
+    
+    document.getElementById('taskModal').classList.add('active');
+}
+
+function closeModal() {
+    document.getElementById('taskModal').classList.remove('active');
+}
+
+// Cancel task function
+async function cancelTask(taskId) {
+    if (!confirm(`Cancel task ${taskId}?`)) return;
+    
+    try {
+        const response = await fetch('/api/cancel_task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: taskId })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateDashboard();
+        } else {
+            alert(result.error || 'Failed to cancel task');
+        }
+    } catch (error) {
+        console.error('Cancel task failed:', error);
+        alert('Network error');
+    }
 }
 
 // Handle page visibility (pause when tab is hidden)

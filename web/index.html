@@ -19,6 +19,63 @@
             </div>
         </header>
 
+        <!-- Action Panels -->
+        <div class="action-panels">
+            <!-- Add Task Panel -->
+            <div class="action-panel">
+                <h3>➕ Add Task</h3>
+                <form id="addTaskForm" class="action-form">
+                    <div class="form-group">
+                        <label for="taskName">Task Name:</label>
+                        <input type="text" id="taskName" name="taskName" required placeholder="Enter task name">
+                    </div>
+                    <div class="form-group">
+                        <label for="taskPriority">Priority:</label>
+                        <select id="taskPriority" name="taskPriority" required>
+                            <option value="HIGH">HIGH</option>
+                            <option value="MEDIUM" selected>MEDIUM</option>
+                            <option value="LOW">LOW</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="taskDuration">Duration (ms):</label>
+                        <input type="number" id="taskDuration" name="taskDuration" required min="100" max="60000" value="5000" placeholder="5000">
+                    </div>
+                    <button type="submit" class="btn btn-success">Add Task</button>
+                    <div id="addTaskMessage" class="message"></div>
+                </form>
+            </div>
+
+            <!-- Simulation Panel -->
+            <div class="action-panel">
+                <h3>🎯 Run Simulation</h3>
+                <form id="simulationForm" class="action-form">
+                    <div class="form-group">
+                        <label for="simScenario">Scenario:</label>
+                        <select id="simScenario" name="simScenario" required>
+                            <option value="priority">Priority Test (LOW→MEDIUM→HIGH ordering)</option>
+                            <option value="burst">Burst Load (Sudden Spike)</option>
+                            <option value="concurrent">Concurrent Execution (All HIGH)</option>
+                            <option value="mixed">Mixed Workload (Realistic)</option>
+                            <option value="long-running">Long Running Tasks (Quick vs Long)</option>
+                            <option value="continuous">Continuous Load (Steady State)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="simCount">Number of Tasks:</label>
+                        <input type="number" id="simCount" name="simCount" required min="1" max="50" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="simInterval">Interval (ms):</label>
+                        <input type="number" id="simInterval" name="simInterval" required min="0" max="5000" value="500">
+                        <small>0 = all at once</small>
+                    </div>
+                    <button type="submit" class="btn btn-warning">Run Simulation</button>
+                    <div id="simulationMessage" class="message"></div>
+                </form>
+            </div>
+        </div>
+
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-icon">📊</div>
@@ -79,6 +136,11 @@
                 <h3>Task Status Distribution</h3>
                 <canvas id="statusChart"></canvas>
             </div>
+            
+            <div class="chart-card">
+                <h3>Worker Utilization</h3>
+                <canvas id="workerChart"></canvas>
+            </div>
         </div>
 
         <div class="main-content">
@@ -86,6 +148,8 @@
                 <div class="section-header">
                     <h2>Task Queue</h2>
                     <div class="filter-controls">
+                        <button id="exportCsvBtn" class="btn btn-secondary btn-sm">📥 CSV</button>
+                        <button id="exportJsonBtn" class="btn btn-secondary btn-sm">📥 JSON</button>
                         <select id="statusFilter" class="filter-select">
                             <option value="all">All Status</option>
                             <option value="PENDING">Pending</option>
@@ -113,6 +177,7 @@
                                 <th>Progress</th>
                                 <th>Worker</th>
                                 <th>Created</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="tasksTableBody">
@@ -128,6 +193,84 @@
                 <h2>Worker Status</h2>
                 <div class="workers-grid" id="workersGrid">
                     <div class="loading">Loading workers...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Detail Modal -->
+    <div id="taskModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTaskName">Task Details</h2>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="detail-grid">
+                    <div class="detail-item">
+                        <span class="detail-label">Task ID</span>
+                        <span class="detail-value" id="modalTaskId">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Priority</span>
+                        <span class="detail-value" id="modalTaskPriority">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Status</span>
+                        <span class="detail-value" id="modalTaskStatus">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Worker</span>
+                        <span class="detail-value" id="modalTaskWorker">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Expected Duration</span>
+                        <span class="detail-value" id="modalTaskDuration">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Progress</span>
+                        <span class="detail-value" id="modalTaskProgress">-</span>
+                    </div>
+                </div>
+                
+                <h3>Timeline</h3>
+                <div class="timeline">
+                    <div class="timeline-item">
+                        <div class="timeline-dot created"></div>
+                        <div class="timeline-content">
+                            <span class="timeline-label">Created</span>
+                            <span class="timeline-time" id="modalTimeCreated">-</span>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot started"></div>
+                        <div class="timeline-content">
+                            <span class="timeline-label">Started</span>
+                            <span class="timeline-time" id="modalTimeStarted">-</span>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot ended"></div>
+                        <div class="timeline-content">
+                            <span class="timeline-label">Ended</span>
+                            <span class="timeline-time" id="modalTimeEnded">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-metrics">
+                    <div class="metric">
+                        <span class="metric-label">Wait Time</span>
+                        <span class="metric-value" id="modalWaitTime">-</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Execution Time</span>
+                        <span class="metric-value" id="modalExecTime">-</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Turnaround Time</span>
+                        <span class="metric-value" id="modalTurnaroundTime">-</span>
+                    </div>
                 </div>
             </div>
         </div>
