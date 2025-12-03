@@ -35,6 +35,19 @@ typedef enum {
     STATUS_FAILED = 3
 } TaskStatus;
 
+// Scheduling Algorithms
+typedef enum {
+    SCHED_ALGORITHM_PRIORITY = 0,  // Priority-based (default)
+    SCHED_ALGORITHM_EDF = 1,       // Earliest Deadline First
+    SCHED_ALGORITHM_MLFQ = 2,      // Multi-Level Feedback Queue
+    SCHED_ALGORITHM_GANG = 3,      // Gang Scheduling
+    SCHED_ALGORITHM_ROUND_ROBIN = 4, // Round Robin (time-sliced)
+    SCHED_ALGORITHM_SJF = 5,       // Shortest Job First
+    SCHED_ALGORITHM_FIFO = 6,      // First In First Out / FCFS
+    SCHED_ALGORITHM_LOTTERY = 7,   // Lottery Scheduling
+    SCHED_ALGORITHM_SRTF = 8       // Shortest Remaining Time First
+} SchedulingAlgorithm;
+
 // Utility macros
 #define MAX_TASK_NAME_LEN 256
 #define MAX_LOG_MESSAGE_LEN 512
@@ -42,6 +55,7 @@ typedef enum {
 // Priority string conversion
 const char* priority_to_string(Priority p);
 const char* status_to_string(TaskStatus s);
+const char* algorithm_to_string(SchedulingAlgorithm alg);
 
 // Time utilities
 time_t get_current_time(void);

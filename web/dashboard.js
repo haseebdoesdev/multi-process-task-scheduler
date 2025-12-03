@@ -1,7 +1,7 @@
 // Dashboard JavaScript for real-time updates
 
 const API_BASE = '';
-const REFRESH_INTERVAL = 2000; // 2 seconds
+const REFRESH_INTERVAL = 200; // 0.2 seconds (very fast updates - 5 times per second)
 let autoRefresh = true;
 let refreshIntervalId = null;
 let throughputData = [];
@@ -20,9 +20,66 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeCharts();
     setupEventListeners();
     setupForms();
+    setupAlgorithmSelector();
     startAutoRefresh();
     updateDashboard();
 });
+
+// Setup algorithm selector
+function setupAlgorithmSelector() {
+    const algorithmSelect = document.getElementById('algorithmSelect');
+    const algorithmStatus = document.getElementById('algorithmStatus');
+    
+    // Fetch current algorithm
+    fetch(`${API_BASE}/api/algorithm`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.algorithm) {
+                algorithmSelect.value = data.algorithm;
+                algorithmStatus.textContent = `Current: ${data.algorithm}`;
+            }
+        })
+        .catch(err => console.error('Error fetching algorithm:', err));
+    
+    // Handle algorithm change
+    algorithmSelect.addEventListener('change', async (e) => {
+        const algorithm = e.target.value;
+        algorithmStatus.textContent = 'Changing...';
+        
+        try {
+            const response = await fetch(`${API_BASE}/api/set_algorithm`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ algorithm })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                algorithmStatus.textContent = `✅ ${result.algorithm}`;
+                setTimeout(() => updateDashboard(), 500);
+            } else {
+                algorithmStatus.textContent = `❌ Failed`;
+                // Revert selection
+                fetch(`${API_BASE}/api/algorithm`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.algorithm) algorithmSelect.value = data.algorithm;
+                    });
+            }
+        } catch (error) {
+            algorithmStatus.textContent = `❌ Error`;
+            console.error('Error setting algorithm:', error);
+        }
+        
+        setTimeout(() => {
+            if (algorithmStatus.textContent !== `✅ ${algorithm}`) {
+                algorithmStatus.textContent = '';
+            }
+        }, 3000);
+    });
+}
 
 // Initialize Chart.js charts
 function initializeCharts() {
@@ -198,8 +255,13 @@ function setupForms() {
         const formData = {
             name: document.getElementById('taskName').value,
             priority: document.getElementById('taskPriority').value,
-            duration: parseInt(document.getElementById('taskDuration').value)
+            duration: parseInt(document.getElementById('taskDuration').value),
+            deadline: document.getElementById('taskDeadline').value ? parseInt(document.getElementById('taskDeadline').value) : undefined,
+            gang_id: document.getElementById('taskGangId').value ? parseInt(document.getElementById('taskGangId').value) : undefined
         };
+        
+        // Remove undefined fields
+        Object.keys(formData).forEach(key => formData[key] === undefined && delete formData[key]);
         
         try {
             const response = await fetch('/api/add_task', {
@@ -385,7 +447,7 @@ function updateTaskTable(tasks) {
     filteredTasks.sort((a, b) => b.id - a.id);
     
     if (filteredTasks.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No tasks found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="loading">No tasks found</td></tr>';
         return;
     }
     
@@ -396,17 +458,54 @@ function updateTaskTable(tasks) {
         const rowClass = isNew ? 'new-task' : '';
         
         const canCancel = task.status === 'PENDING';
+        
+        // MLFQ Level visualization - show priority change if different
+        let mlfqLevelHtml = '';
+        if (task.current_mlfq_level !== undefined && task.current_mlfq_level !== task.priority) {
+            // Priority transition detected
+            mlfqLevelHtml = `<span class="priority-badge priority-${task.current_mlfq_level.toLowerCase()}" title="Original: ${task.priority}, Current: ${task.current_mlfq_level}">
+                ${task.current_mlfq_level} <span style="font-size:0.8em;opacity:0.7;">(was ${task.priority})</span>
+            </span>`;
+        } else {
+            mlfqLevelHtml = `<span class="priority-badge priority-${task.priority.toLowerCase()}">${task.priority}</span>`;
+        }
+        
+        // Deadline countdown
+        let deadlineHtml = '-';
+        if (task.deadline_seconds !== undefined && task.deadline_seconds >= 0) {
+            const seconds = task.deadline_seconds;
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            let timeStr = '';
+            if (hours > 0) {
+                timeStr = `${hours}h ${minutes % 60}m`;
+            } else if (minutes > 0) {
+                timeStr = `${minutes}m ${seconds % 60}s`;
+            } else {
+                timeStr = `${seconds}s`;
+            }
+            const deadlineClass = seconds < 60 ? 'deadline-critical' : seconds < 300 ? 'deadline-warning' : 'deadline-ok';
+            deadlineHtml = `<span class="${deadlineClass}" title="Deadline in ${seconds} seconds">⏰ ${timeStr}</span>`;
+        }
+        
+        // Gang ID
+        const gangIdHtml = task.gang_id !== undefined && task.gang_id >= 0 ? 
+            `<span class="gang-badge" title="Gang ${task.gang_id}">Gang ${task.gang_id}</span>` : '-';
+        
         html += `
             <tr class="${rowClass}">
                 <td>${task.id}</td>
                 <td class="task-name-cell" onclick="openTaskModal(${task.id})" style="cursor:pointer;">${escapeHtml(task.name)}</td>
                 <td><span class="priority-badge priority-${task.priority.toLowerCase()}">${task.priority}</span></td>
+                <td>${mlfqLevelHtml}</td>
                 <td><span class="status-badge status-${task.status.toLowerCase()}">${task.status}</span></td>
                 <td>
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: ${task.progress || 0}%"></div>
                     </div>
                 </td>
+                <td>${deadlineHtml}</td>
+                <td>${gangIdHtml}</td>
                 <td>${task.worker_id >= 0 ? `Worker ${task.worker_id}` : '-'}</td>
                 <td>${formatTime(task.creation_time)}</td>
                 <td class="task-actions">

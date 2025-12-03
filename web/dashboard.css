@@ -791,3 +791,76 @@ header h1 {
     gap: 5px;
 }
 
+/* Algorithm Selector */
+.algorithm-selector {
+    background: var(--card-bg);
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    box-shadow: var(--shadow);
+}
+
+.algorithm-selector h3 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.algorithm-dropdown {
+    padding: 8px 12px;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    cursor: pointer;
+    min-width: 250px;
+}
+
+.algorithm-dropdown:hover {
+    border-color: var(--primary-color);
+}
+
+.algorithm-status {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-left: auto;
+}
+
+/* Deadline countdown */
+.deadline-ok {
+    color: var(--success-color);
+    font-weight: 500;
+}
+
+.deadline-warning {
+    color: var(--warning-color);
+    font-weight: 500;
+}
+
+.deadline-critical {
+    color: var(--danger-color);
+    font-weight: bold;
+    animation: pulse 1s infinite;
+}
+
+/* Gang badge */
+.gang-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    background: var(--secondary-color);
+    color: white;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* MLFQ transition indicator */
+.priority-badge span {
+    font-size: 0.7em;
+    opacity: 0.8;
+    margin-left: 4px;
+}
+

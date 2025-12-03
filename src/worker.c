@@ -1,7 +1,9 @@
+#define _GNU_SOURCE
 #include "common.h"
 #include "task_queue.h"
 #include "logger.h"
 #include <sys/wait.h>
+#include <sched.h>
 
 static TaskQueue* queue = NULL;
 static int worker_id = -1;
@@ -32,11 +34,52 @@ void* task_executor_thread(void* arg) {
     TaskQueue* q = data->queue;
     int wid = data->worker_id;
     
+    // Update MLFQ priority tracking during execution
+    if (q->algorithm == SCHED_ALGORITHM_MLFQ) {
+        pthread_mutex_lock(&q->queue_mutex);
+        Task* task_ptr = find_task_by_id(q, task.id);
+        if (task_ptr) {
+            update_mlfq_priority(q, task_ptr);
+        }
+        pthread_mutex_unlock(&q->queue_mutex);
+    }
+    
     LOG_INFO_F("Worker %d: Thread executing task %d: %s (priority: %s, duration: %u ms)",
                wid, task.id, task.name, priority_to_string(task.priority), task.execution_time_ms);
     
     // Simulate task execution by sleeping
-    usleep(task.execution_time_ms * 1000); // Convert ms to microseconds
+    // For MLFQ, track CPU time usage
+    // For SRTF, track remaining time
+    unsigned int remaining_time = task.execution_time_ms;
+    if (q->algorithm == SCHED_ALGORITHM_SRTF && task.remaining_time_ms > 0) {
+        remaining_time = task.remaining_time_ms;  // Use remaining time for SRTF
+    }
+    
+    while (remaining_time > 0 && !shutdown_requested) {
+        unsigned int chunk = (remaining_time > 100) ? 100 : remaining_time;  // Check every 100ms
+        usleep(chunk * 1000);
+        remaining_time -= chunk;
+        
+        // Update task state in shared memory
+        pthread_mutex_lock(&q->queue_mutex);
+        Task* task_ptr = find_task_by_id(q, task.id);
+        if (task_ptr && task_ptr->status == STATUS_RUNNING) {
+            // Update CPU time used for MLFQ
+            if (q->algorithm == SCHED_ALGORITHM_MLFQ) {
+                task_ptr->cpu_time_used += chunk;
+                update_mlfq_priority(q, task_ptr);
+            }
+            // Update remaining time for SRTF
+            if (q->algorithm == SCHED_ALGORITHM_SRTF) {
+                if (task_ptr->remaining_time_ms > chunk) {
+                    task_ptr->remaining_time_ms -= chunk;
+                } else {
+                    task_ptr->remaining_time_ms = 0;
+                }
+            }
+        }
+        pthread_mutex_unlock(&q->queue_mutex);
+    }
     
     // Update task status to completed
     time_t end_time;
@@ -106,29 +149,23 @@ void worker_main_loop(void) {
             break;
         }
         
-        // Try to dequeue a task (mutex still locked)
-        int found_idx = -1;
-        for (int i = 0; i < queue->size; i++) {
-            if (queue->tasks[i].status == STATUS_PENDING) {
-                found_idx = i;
-                break;
-            }
+        // Try to dequeue a task using the configured algorithm
+        // Note: dequeue_task_algorithm locks/unlocks mutex internally,
+        // so we need to unlock first
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        // Use algorithm-aware dequeue
+        if (dequeue_task_algorithm(queue, &task) < 0) {
+            continue;  // No task available
         }
         
-        if (found_idx == -1) {
-            pthread_mutex_unlock(&queue->queue_mutex);
-            continue;
+        // Set worker ID (need to lock again to update)
+        pthread_mutex_lock(&queue->queue_mutex);
+        Task* found_task = find_task_by_id(queue, task.id);
+        if (found_task) {
+            found_task->worker_id = worker_id;
+            task.worker_id = worker_id;
         }
-        
-        // Copy task and update status
-        task = queue->tasks[found_idx];
-        task.status = STATUS_RUNNING;
-        task.start_time = time(NULL);
-        task.worker_id = worker_id;
-        queue->tasks[found_idx].status = STATUS_RUNNING;
-        queue->tasks[found_idx].start_time = task.start_time;
-        queue->tasks[found_idx].worker_id = worker_id;
-        
         pthread_mutex_unlock(&queue->queue_mutex);
         
         // Execute the task (outside of lock)
@@ -165,6 +202,20 @@ int main(int argc, char* argv[]) {
     }
     
     LOG_INFO_F("Worker %d: Attached to shared memory", worker_id);
+    
+    // Set CPU affinity: Pin worker to a specific CPU core
+    if (queue->num_cpu_cores > 0) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        int core_id = worker_id % queue->num_cpu_cores;
+        CPU_SET(core_id, &cpuset);
+        
+        if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0) {
+            LOG_INFO_F("Worker %d: Pinned to CPU core %d (total cores: %d)", worker_id, core_id, queue->num_cpu_cores);
+        } else {
+            LOG_ERROR_F("Worker %d: Failed to set CPU affinity: %s", worker_id, strerror(errno));
+        }
+    }
     
     // Register worker as active
     pthread_mutex_lock(&queue->queue_mutex);

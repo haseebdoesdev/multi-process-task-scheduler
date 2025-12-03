@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 #include <strings.h>
 #include <ctype.h>
 #include <pthread.h>
@@ -88,10 +89,14 @@ void generate_status_json(char* buffer, int buffer_size) {
         "\"running_tasks\":%d,"
         "\"active_workers\":%d,"
         "\"queue_size\":%d,"
-        "\"queue_capacity\":%d"
+        "\"queue_capacity\":%d,"
+        "\"algorithm\":\"%s\","
+        "\"num_cpu_cores\":%d"
         "}",
         total, completed, failed, pending, running,
-        queue->num_active_workers, queue->size, queue->capacity);
+        queue->num_active_workers, queue->size, queue->capacity,
+        algorithm_to_string(queue->algorithm),
+        queue->num_cpu_cores);
     
     pthread_mutex_unlock(&queue->queue_mutex);
 }
@@ -106,10 +111,16 @@ void generate_tasks_json(char* buffer, int buffer_size) {
     pthread_mutex_lock(&queue->queue_mutex);
     
     strcpy(buffer, "{\"tasks\":[");
+    int buffer_used = strlen(buffer);
     int first = 1;
     
     for (int i = 0; i < queue->size; i++) {
         Task* task = &queue->tasks[i];
+        
+        // Check if we have enough space (reserve at least 2100 bytes per task + comma + closing)
+        if (buffer_used > buffer_size - 2100) {
+            break;  // Buffer getting full, stop adding tasks
+        }
         
         char creation_time[64], start_time[64], end_time[64];
         format_timestamp(task->creation_time, creation_time, sizeof(creation_time));
@@ -124,24 +135,49 @@ void generate_tasks_json(char* buffer, int buffer_size) {
             strcpy(end_time, "");
         }
         
-        // Calculate progress for running tasks
+        // Calculate progress for running tasks with millisecond precision
         double progress = 0.0;
         if (task->status == STATUS_RUNNING && task->start_time > 0) {
-            time_t now = time(NULL);
-            time_t elapsed = now - task->start_time;
-            if (task->execution_time_ms > 0) {
-                progress = ((double)elapsed * 1000.0) / (double)task->execution_time_ms;
+            // Use high-precision timing (milliseconds) for accurate progress
+            struct timespec now_ts;
+            clock_gettime(CLOCK_REALTIME, &now_ts);
+            long long now_ms = (long long)now_ts.tv_sec * 1000LL + now_ts.tv_nsec / 1000000LL;
+            
+            // start_time is in seconds, convert to milliseconds
+            long long start_ms = (long long)task->start_time * 1000LL;
+            
+            long long elapsed_ms = now_ms - start_ms;
+            if (task->execution_time_ms > 0 && elapsed_ms > 0) {
+                progress = ((double)elapsed_ms) / (double)task->execution_time_ms * 100.0;
                 if (progress > 100.0) progress = 100.0;
             }
         } else if (task->status == STATUS_COMPLETED) {
             progress = 100.0;
         }
         
-        if (!first) strcat(buffer, ",");
+        // Add comma if not first task (with bounds check)
+        if (!first) {
+            int remaining = buffer_size - buffer_used - 1;
+            if (remaining > 0) {
+                strcat(buffer, ",");
+                buffer_used++;
+            } else {
+                break;  // No space for comma
+            }
+        }
         first = 0;
         
-        char task_json[768];
-        snprintf(task_json, sizeof(task_json),
+        // Calculate deadline countdown (if applicable)
+        int deadline_seconds = -1;
+        if (task->deadline_time > 0) {
+            time_t now = time(NULL);
+            deadline_seconds = (int)(task->deadline_time - now);
+            if (deadline_seconds < 0) deadline_seconds = 0;
+        }
+        
+        // Increased buffer size to prevent overflow with long task names
+        char task_json[2048];
+        int written = snprintf(task_json, sizeof(task_json),
             "{"
             "\"id\":%d,"
             "\"name\":\"%s\","
@@ -152,18 +188,56 @@ void generate_tasks_json(char* buffer, int buffer_size) {
             "\"end_time\":\"%s\","
             "\"execution_time_ms\":%u,"
             "\"worker_id\":%d,"
-            "\"progress\":%.2f"
+            "\"progress\":%.2f,"
+            "\"deadline_time\":%ld,"
+            "\"deadline_seconds\":%d,"
+            "\"gang_id\":%d,"
+            "\"cpu_time_used\":%u,"
+            "\"current_mlfq_level\":\"%s\","
+            "\"lottery_tickets\":%u,"
+            "\"remaining_time_ms\":%u"
             "}",
             task->id, task->name,
             priority_to_string(task->priority),
             status_to_string(task->status),
             creation_time, start_time, end_time,
-            task->execution_time_ms, task->worker_id, progress);
+            task->execution_time_ms, task->worker_id, progress,
+            task->deadline_time, deadline_seconds, task->gang_id,
+            task->cpu_time_used,
+            priority_to_string(task->current_mlfq_level),
+            task->lottery_tickets,
+            task->remaining_time_ms);
         
-        strcat(buffer, task_json);
+        // Check if snprintf succeeded and there's space
+        if (written < 0 || written >= (int)sizeof(task_json)) {
+            // Truncation occurred or error, skip this task
+            continue;
+        }
+        
+        // Safely append task_json with bounds checking
+        int remaining = buffer_size - buffer_used - 1;
+        if (remaining > 0) {
+            int to_copy = written;
+            if (to_copy >= remaining) {
+                to_copy = remaining - 1;
+            }
+            strncat(buffer, task_json, to_copy);
+            buffer[buffer_used + to_copy] = '\0';
+            buffer_used += to_copy;
+        } else {
+            break;  // Buffer full
+        }
     }
     
-    strcat(buffer, "]}");
+    // Safely append closing bracket
+    int remaining = buffer_size - buffer_used - 3;  // Reserve for "]}"
+    if (remaining > 0) {
+        strcat(buffer, "]}");
+    } else {
+        // Emergency fallback: just close what we have
+        buffer[buffer_size - 3] = '\0';
+        strcat(buffer, "]}");
+    }
     
     pthread_mutex_unlock(&queue->queue_mutex);
 }
@@ -278,10 +352,14 @@ void handle_add_task_post(int sockfd, const char* body, int body_len) {
     char name[256] = {0};
     char priority_str[32] = {0};
     char duration_str[32] = {0};
+    char deadline_str[32] = {0};
+    char gang_id_str[32] = {0};
     
     parse_json_field(body, "name", name, sizeof(name));
     parse_json_field(body, "priority", priority_str, sizeof(priority_str));
     parse_json_field(body, "duration", duration_str, sizeof(duration_str));
+    parse_json_field(body, "deadline", deadline_str, sizeof(deadline_str));  // Optional: seconds from now
+    parse_json_field(body, "gang_id", gang_id_str, sizeof(gang_id_str));     // Optional: gang ID
     
     if (strlen(name) == 0 || strlen(priority_str) == 0 || strlen(duration_str) == 0) {
         send_response(sockfd, 400, "application/json", "{\"error\":\"Missing required fields\"}", 36);
@@ -303,13 +381,74 @@ void handle_add_task_post(int sockfd, const char* body, int body_len) {
         return;
     }
     
-    int task_id = enqueue_task(queue, name, priority, duration);
+    // Parse optional fields
+    time_t deadline_time = 0;
+    if (strlen(deadline_str) > 0) {
+        int deadline_seconds = atoi(deadline_str);
+        if (deadline_seconds > 0) {
+            deadline_time = time(NULL) + deadline_seconds;
+        }
+    }
+    
+    int gang_id = -1;
+    if (strlen(gang_id_str) > 0) {
+        gang_id = atoi(gang_id_str);
+        if (gang_id < 0) gang_id = -1;
+    }
+    
+    int task_id;
+    if (deadline_time > 0 || gang_id >= 0) {
+        task_id = enqueue_task_advanced(queue, name, priority, duration, deadline_time, gang_id);
+    } else {
+        task_id = enqueue_task(queue, name, priority, duration);
+    }
+    
     if (task_id > 0) {
         char response[256];
         snprintf(response, sizeof(response), "{\"success\":true,\"task_id\":%d,\"message\":\"Task added successfully\"}", task_id);
         send_response(sockfd, 200, "application/json", response, strlen(response));
     } else {
         send_response(sockfd, 500, "application/json", "{\"error\":\"Failed to add task (queue might be full)\"}", 50);
+    }
+}
+
+// Handle POST request to set scheduling algorithm
+void handle_set_algorithm_post(int sockfd, const char* body, int body_len) {
+    (void)body_len;
+    if (queue == NULL) {
+        send_response(sockfd, 500, "application/json", "{\"error\":\"Queue not available\"}", 33);
+        return;
+    }
+    
+    char algorithm_str[32] = {0};
+    parse_json_field(body, "algorithm", algorithm_str, sizeof(algorithm_str));
+    
+    if (strlen(algorithm_str) == 0) {
+        send_response(sockfd, 400, "application/json", "{\"error\":\"Missing algorithm field\"}", 37);
+        return;
+    }
+    
+    SchedulingAlgorithm algorithm;
+    if (strcasecmp(algorithm_str, "PRIORITY") == 0) algorithm = SCHED_ALGORITHM_PRIORITY;
+    else if (strcasecmp(algorithm_str, "EDF") == 0) algorithm = SCHED_ALGORITHM_EDF;
+    else if (strcasecmp(algorithm_str, "MLFQ") == 0) algorithm = SCHED_ALGORITHM_MLFQ;
+    else if (strcasecmp(algorithm_str, "GANG") == 0) algorithm = SCHED_ALGORITHM_GANG;
+    else if (strcasecmp(algorithm_str, "ROUND_ROBIN") == 0 || strcasecmp(algorithm_str, "RR") == 0) algorithm = SCHED_ALGORITHM_ROUND_ROBIN;
+    else if (strcasecmp(algorithm_str, "SJF") == 0) algorithm = SCHED_ALGORITHM_SJF;
+    else if (strcasecmp(algorithm_str, "FIFO") == 0 || strcasecmp(algorithm_str, "FCFS") == 0) algorithm = SCHED_ALGORITHM_FIFO;
+    else if (strcasecmp(algorithm_str, "LOTTERY") == 0) algorithm = SCHED_ALGORITHM_LOTTERY;
+    else if (strcasecmp(algorithm_str, "SRTF") == 0) algorithm = SCHED_ALGORITHM_SRTF;
+    else {
+        send_response(sockfd, 400, "application/json", "{\"error\":\"Invalid algorithm\"}", 29);
+        return;
+    }
+    
+    if (set_scheduling_algorithm(queue, algorithm) == 0) {
+        char response[128];
+        snprintf(response, sizeof(response), "{\"success\":true,\"algorithm\":\"%s\",\"message\":\"Algorithm set successfully\"}", algorithm_to_string(algorithm));
+        send_response(sockfd, 200, "application/json", response, strlen(response));
+    } else {
+        send_response(sockfd, 500, "application/json", "{\"error\":\"Failed to set algorithm\"}", 33);
     }
 }
 
@@ -605,6 +744,18 @@ void handle_api_request(int sockfd, const char* path, const char* method, const 
         handle_simulation_post(sockfd, body, body_len);
     } else if (strcmp(path, "/api/cancel_task") == 0 && strcmp(method, "POST") == 0) {
         handle_cancel_task_post(sockfd, body, body_len);
+    } else if (strcmp(path, "/api/set_algorithm") == 0 && strcmp(method, "POST") == 0) {
+        handle_set_algorithm_post(sockfd, body, body_len);
+    } else if (strcmp(path, "/api/algorithm") == 0 && strcmp(method, "GET") == 0) {
+        // Get current algorithm
+        if (queue != NULL) {
+            SchedulingAlgorithm alg = get_scheduling_algorithm(queue);
+            char response[128];
+            snprintf(response, sizeof(response), "{\"algorithm\":\"%s\"}", algorithm_to_string(alg));
+            send_response(sockfd, 200, "application/json", response, strlen(response));
+        } else {
+            send_response(sockfd, 500, "application/json", "{\"error\":\"Queue not available\"}", 33);
+        }
     } else {
         send_response(sockfd, 404, "application/json", "{\"error\":\"Not found\"}", 19);
     }
