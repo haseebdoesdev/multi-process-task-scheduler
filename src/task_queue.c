@@ -1,6 +1,9 @@
 #include "task_queue.h"
 #include "logger.h"
 #include <sys/stat.h>
+#include <unistd.h>
+#include <limits.h>
+#include <stdlib.h>
 
 static int shm_id = -1;
 
@@ -46,6 +49,16 @@ int init_shared_memory(void) {
         queue->num_active_workers = 0;
         queue->shutdown_flag = 0;
         queue->scheduler_pid = 0;
+        queue->algorithm = SCHED_ALGORITHM_PRIORITY;  // Default algorithm
+        queue->mlfq_time_slice_ms = 1000;  // 1 second time slice
+        queue->mlfq_max_cpu_time_ms = 5000;  // 5 seconds max before demotion
+        queue->rr_last_index = -1;  // Round Robin: start from beginning
+        queue->rr_time_quantum_ms = 2000;  // 2 second time quantum for Round Robin
+        queue->num_cpu_cores = sysconf(_SC_NPROCESSORS_ONLN);  // Detect CPU cores
+        if (queue->num_cpu_cores <= 0) queue->num_cpu_cores = 1;  // Fallback
+        
+        // Seed random number generator for lottery scheduling (only once)
+        srand((unsigned int)time(NULL));
         
         // Initialize mutex with process-shared attribute
         pthread_mutexattr_t mutex_attr;
@@ -143,6 +156,13 @@ int enqueue_task(TaskQueue* queue, const char* name, Priority priority, unsigned
     task->execution_time_ms = execution_time_ms;
     task->worker_id = -1;
     task->thread_id = 0;
+    task->deadline_time = 0;
+    task->gang_id = -1;
+    task->cpu_time_used = 0;
+    task->current_mlfq_level = priority;
+    task->mlfq_level_start = time(NULL);
+    task->lottery_tickets = 10;  // Default tickets for lottery scheduling
+    task->remaining_time_ms = execution_time_ms;  // For SRTF
     
     queue->size++;
     queue->total_tasks++;
@@ -368,5 +388,312 @@ int cancel_task(TaskQueue* queue, int task_id) {
     pthread_mutex_unlock(&queue->queue_mutex);
     
     return 0; // Success
+}
+
+// Advanced enqueue with deadline and gang support
+int enqueue_task_advanced(TaskQueue* queue, const char* name, Priority priority, unsigned int execution_time_ms, 
+                          time_t deadline_time, int gang_id) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    if (is_queue_full(queue)) {
+        pthread_mutex_unlock(&queue->queue_mutex);
+        return -1;
+    }
+    
+    // Find insertion point based on algorithm
+    int insert_pos = queue->size;
+    
+    if (queue->algorithm == SCHED_ALGORITHM_EDF && deadline_time > 0) {
+        // EDF: Sort by deadline (earliest first)
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                // If task has deadline and new task has deadline, compare
+                if (queue->tasks[i].deadline_time > 0 && deadline_time > 0) {
+                    if (deadline_time < queue->tasks[i].deadline_time) {
+                        insert_pos = i;
+                        break;
+                    }
+                } else if (deadline_time > 0) {
+                    // New task has deadline, existing doesn't - prioritize deadline
+                    insert_pos = i;
+                    break;
+                }
+            }
+        }
+    } else {
+        // Priority-based: Use binary search as before
+        int left = 0;
+        int right = queue->size;
+        
+        while (left < right) {
+            int mid = left + (right - left) / 2;
+            if (queue->tasks[mid].priority > priority) {
+                insert_pos = mid;
+                right = mid;
+            } else {
+                left = mid + 1;
+            }
+        }
+    }
+    
+    // Shift tasks
+    for (int i = queue->size; i > insert_pos; i--) {
+        queue->tasks[i] = queue->tasks[i - 1];
+    }
+    
+    // Insert new task
+    Task* task = &queue->tasks[insert_pos];
+    task->id = queue->next_task_id++;
+    strncpy(task->name, name, MAX_TASK_NAME_LEN - 1);
+    task->name[MAX_TASK_NAME_LEN - 1] = '\0';
+    task->priority = priority;
+    task->status = STATUS_PENDING;
+    task->creation_time = time(NULL);
+    task->start_time = 0;
+    task->end_time = 0;
+    task->execution_time_ms = execution_time_ms;
+    task->worker_id = -1;
+    task->thread_id = 0;
+    task->deadline_time = deadline_time;
+    task->gang_id = gang_id;
+    task->cpu_time_used = 0;
+    task->current_mlfq_level = priority;
+    task->mlfq_level_start = time(NULL);
+    task->lottery_tickets = 10;  // Default tickets for lottery scheduling
+    task->remaining_time_ms = execution_time_ms;  // For SRTF
+    
+    queue->size++;
+    queue->total_tasks++;
+    
+    pthread_cond_signal(&queue->queue_cond);
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return task->id;
+}
+
+// Dequeue using configured algorithm
+int dequeue_task_algorithm(TaskQueue* queue, Task* task) {
+    if (queue == NULL || task == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    int found_idx = -1;
+    time_t current_time = time(NULL);
+    
+    if (queue->algorithm == SCHED_ALGORITHM_EDF) {
+        // EDF: Find task with earliest deadline
+        time_t earliest_deadline = 0;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                if (queue->tasks[i].deadline_time > 0) {
+                    if (found_idx == -1 || queue->tasks[i].deadline_time < earliest_deadline) {
+                        found_idx = i;
+                        earliest_deadline = queue->tasks[i].deadline_time;
+                    }
+                } else if (found_idx == -1) {
+                    // Task without deadline - use as fallback
+                    found_idx = i;
+                }
+            }
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_GANG) {
+        // Gang: Find first task in a gang, then get all gang members
+        // For simplicity, return first pending task (gang coordination in worker)
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                found_idx = i;
+                break;
+            }
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_ROUND_ROBIN) {
+        // Round Robin: Circular scheduling from last index
+        int start_idx = (queue->rr_last_index + 1) % queue->size;
+        for (int i = 0; i < queue->size; i++) {
+            int idx = (start_idx + i) % queue->size;
+            if (queue->tasks[idx].status == STATUS_PENDING) {
+                found_idx = idx;
+                break;
+            }
+        }
+        if (found_idx >= 0) {
+            queue->rr_last_index = found_idx;
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_FIFO) {
+        // FIFO/FCFS: First come, first served (oldest creation time first)
+        time_t oldest_time = 0;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                if (found_idx == -1 || queue->tasks[i].creation_time < oldest_time) {
+                    found_idx = i;
+                    oldest_time = queue->tasks[i].creation_time;
+                }
+            }
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_SJF) {
+        // Shortest Job First: Schedule task with smallest execution time
+        unsigned int shortest_time = UINT_MAX;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                if (queue->tasks[i].execution_time_ms < shortest_time) {
+                    found_idx = i;
+                    shortest_time = queue->tasks[i].execution_time_ms;
+                }
+            }
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_SRTF) {
+        // Shortest Remaining Time First: Schedule task with smallest remaining time
+        unsigned int shortest_remaining = UINT_MAX;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                // Update remaining time if task was previously running but preempted
+                if (queue->tasks[i].remaining_time_ms == 0) {
+                    queue->tasks[i].remaining_time_ms = queue->tasks[i].execution_time_ms;
+                }
+                if (queue->tasks[i].remaining_time_ms < shortest_remaining) {
+                    found_idx = i;
+                    shortest_remaining = queue->tasks[i].remaining_time_ms;
+                }
+            }
+        }
+    } else if (queue->algorithm == SCHED_ALGORITHM_LOTTERY) {
+        // Lottery Scheduling: Weighted random selection based on tickets
+        unsigned int total_tickets = 0;
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                total_tickets += queue->tasks[i].lottery_tickets;
+            }
+        }
+        
+        if (total_tickets > 0) {
+            // Generate random number between 0 and total_tickets
+            unsigned int winning_ticket = (unsigned int)(rand() % total_tickets);
+            unsigned int ticket_count = 0;
+            
+            for (int i = 0; i < queue->size; i++) {
+                if (queue->tasks[i].status == STATUS_PENDING) {
+                    ticket_count += queue->tasks[i].lottery_tickets;
+                    if (ticket_count > winning_ticket) {
+                        found_idx = i;
+                        break;
+                    }
+                }
+            }
+        }
+    } else {
+        // Priority or MLFQ: Find highest priority pending task
+        Priority best_priority = PRIORITY_LOW + 1;  // Start higher than any valid priority
+        for (int i = 0; i < queue->size; i++) {
+            if (queue->tasks[i].status == STATUS_PENDING) {
+                Priority task_priority = (queue->algorithm == SCHED_ALGORITHM_MLFQ) 
+                    ? queue->tasks[i].current_mlfq_level 
+                    : queue->tasks[i].priority;
+                
+                if (task_priority < best_priority) {
+                    found_idx = i;
+                    best_priority = task_priority;
+                }
+            }
+        }
+    }
+    
+    if (found_idx == -1) {
+        pthread_mutex_unlock(&queue->queue_mutex);
+        return -1;
+    }
+    
+    // Copy task
+    *task = queue->tasks[found_idx];
+    task->status = STATUS_RUNNING;
+    task->start_time = current_time;
+    
+    // Update in queue
+    queue->tasks[found_idx].status = STATUS_RUNNING;
+    queue->tasks[found_idx].start_time = task->start_time;
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return task->id;
+}
+
+// Set scheduling algorithm
+int set_scheduling_algorithm(TaskQueue* queue, SchedulingAlgorithm algorithm) {
+    if (queue == NULL) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    queue->algorithm = algorithm;
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return 0;
+}
+
+// Get scheduling algorithm
+SchedulingAlgorithm get_scheduling_algorithm(TaskQueue* queue) {
+    if (queue == NULL) return SCHED_ALGORITHM_PRIORITY;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    SchedulingAlgorithm alg = queue->algorithm;
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return alg;
+}
+
+// Update MLFQ priority based on CPU time used
+void update_mlfq_priority(TaskQueue* queue, Task* task) {
+    if (queue == NULL || task == NULL || queue->algorithm != SCHED_ALGORITHM_MLFQ) {
+        return;
+    }
+    
+    // Check if task exceeded time slice for current level
+    time_t current_time = time(NULL);
+    unsigned int time_in_level = (unsigned int)difftime(current_time, task->mlfq_level_start) * 1000;
+    
+    // If exceeded time slice and not already at lowest priority, demote
+    if (time_in_level > queue->mlfq_time_slice_ms && task->current_mlfq_level < PRIORITY_LOW) {
+        task->current_mlfq_level = (Priority)(task->current_mlfq_level + 1);
+        task->mlfq_level_start = current_time;
+        task->cpu_time_used += time_in_level;
+    }
+}
+
+// Get number of tasks in a gang
+int get_gang_size(TaskQueue* queue, int gang_id) {
+    if (queue == NULL || gang_id < 0) return 0;
+    
+    int count = 0;
+    for (int i = 0; i < queue->size; i++) {
+        if (queue->tasks[i].gang_id == gang_id && queue->tasks[i].status == STATUS_PENDING) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// Dequeue all tasks in a gang
+int dequeue_gang_tasks(TaskQueue* queue, int gang_id, Task* tasks, int max_tasks) {
+    if (queue == NULL || tasks == NULL || gang_id < 0) return -1;
+    
+    pthread_mutex_lock(&queue->queue_mutex);
+    
+    int count = 0;
+    time_t current_time = time(NULL);
+    
+    for (int i = 0; i < queue->size && count < max_tasks; i++) {
+        if (queue->tasks[i].gang_id == gang_id && queue->tasks[i].status == STATUS_PENDING) {
+            tasks[count] = queue->tasks[i];
+            tasks[count].status = STATUS_RUNNING;
+            tasks[count].start_time = current_time;
+            
+            queue->tasks[i].status = STATUS_RUNNING;
+            queue->tasks[i].start_time = current_time;
+            
+            count++;
+        }
+    }
+    
+    pthread_mutex_unlock(&queue->queue_mutex);
+    
+    return count;
 }
 

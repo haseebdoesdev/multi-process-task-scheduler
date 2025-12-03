@@ -19,6 +19,21 @@ const char* status_to_string(TaskStatus s) {
     }
 }
 
+const char* algorithm_to_string(SchedulingAlgorithm alg) {
+    switch (alg) {
+        case SCHED_ALGORITHM_PRIORITY: return "PRIORITY";
+        case SCHED_ALGORITHM_EDF:      return "EDF";
+        case SCHED_ALGORITHM_MLFQ:     return "MLFQ";
+        case SCHED_ALGORITHM_GANG:     return "GANG";
+        case SCHED_ALGORITHM_ROUND_ROBIN: return "ROUND_ROBIN";
+        case SCHED_ALGORITHM_SJF:      return "SJF";
+        case SCHED_ALGORITHM_FIFO:     return "FIFO";
+        case SCHED_ALGORITHM_LOTTERY:  return "LOTTERY";
+        case SCHED_ALGORITHM_SRTF:     return "SRTF";
+        default:                       return "UNKNOWN";
+    }
+}
+
 time_t get_current_time(void) {
     return time(NULL);
 }
